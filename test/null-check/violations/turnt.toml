@@ -1,0 +1,4 @@
+# Working directory is dir of this file
+command = "clang++-17 -g {filename} -fpass-plugin=../../../build/null-check/NullCheck.so"
+return_code = 2
+output.txt = "2"
