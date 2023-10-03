@@ -87,7 +87,7 @@ auto displayDebugInfo(const Instruction& Inst)
 {
     const auto InFacts = AnalysisResult.InstructionInFacts.at(&Inst);
     const auto& AbstractVal = InFacts.getAbstractVal(Ptr);
-    if (AbstractVal.IsNull != NullState::NonNull) {
+    if (AbstractVal.IsNull == NullState::MaybeNull) {
         errs() << "\033[31mSafety Violation\033[00m: Use of potentially "
                   "null pointer in "
                << displayUseType(UseType) << " at " << displayDebugInfo(Inst)

@@ -28,10 +28,20 @@ bool isNull(const Value* Value, const NullAbstractVals& State,
         ConstantPointerNull::get(PointerType::get(Value->getType(), 0))) {
         return true;
     }
-    if (const auto It = State.find(Value); It != State.end()) {
-        return MemState.at(It->second).IsNull == NullState::Null;
-    }
     return false;
+}
+
+std::string getDebugName(const Value* I)
+{
+    if (I->hasName()) {
+        return I->getName().str();
+    }
+    std::string Res;
+    raw_string_ostream Stream(Res);
+    I->print(Stream, false);
+    Res = Res.substr(Res.find_first_not_of(" "));
+    // Res = Res.substr(0, Res.find_first_of(" "));
+    return Res;
 }
 }  // namespace
 
@@ -53,8 +63,7 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
     const NullAbstractInterpretation& ContextB)
 {
     auto Result = A;
-    Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::Unknown;
-    Result.IsAlias = A.IsAlias == B.IsAlias ? A.IsAlias : AliasState::Unknown;
+    Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::MaybeNull;
     if (A.Data.has_value() && B.Data.has_value()) {
         const auto& AData = MemState_.at(*A.Data);
         const auto& BData = ContextB.MemState_.at(*B.Data);
@@ -66,9 +75,12 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
         } else {
             Result.Data = A.Data;
         }
-    } else if (A.Data == B.Data) {
-        Result.Data = A.Data;
-    } else {
+    } else if (!A.Data.has_value()) {
+        // Memory for B.Data inserted from parent call to
+        // NullAbstractInterpretation::meet
+        Result.Data = B.Data;
+    }
+    if (Result.IsNull == NullState::MaybeNull) {
         Result.Data = {};
     }
     return Result;
@@ -88,6 +100,7 @@ NullAbstractInterpretation NullAbstractInterpretation::insertIntoRes(
 {
     Res.State_[Value] = std::get<0>(KV);
     Res.MemState_[std::get<0>(KV)] = std::get<1>(KV);
+    Res.DebugNames_[Value] = getDebugName(Value);
     return Res;
 }
 
@@ -96,7 +109,7 @@ TransferRet NullAbstractInterpretation::transferAlloca(
     const AllocaInst* Alloca) const
 {
     return NullAbstractInterpretation::insertIntoRes(
-        *this, Alloca, PtrAbstractValue::makeNonAlias(NullState::NonNull));
+        *this, Alloca, PtrAbstractValue::make(NullState::NonNull));
 }
 TransferRet NullAbstractInterpretation::transferStore(
     const StoreInst* Store) const
@@ -109,14 +122,14 @@ TransferRet NullAbstractInterpretation::transferStore(
         if (Res.State_.contains(Value)) {
             const auto& ValueState = Res.State_.at(Value);
             PointerState.Data = ValueState;
-        } else {
-            auto [NewId, NewVal] = PtrAbstractValue::make();
-            if (isNull(Value, Res.State_, Res.MemState_)) {
-                NewVal.IsNull = NullState::Null;
-            }
+        } else if (Value->getType()->isPointerTy()) {
+            auto [NewId, NewVal] = PtrAbstractValue::make(NullState::MaybeNull);
             PointerState.Data = NewId;
             Res.State_[Value] = NewId;
             Res.MemState_[NewId] = NewVal;
+            Res.DebugNames_[Value] = getDebugName(Value);
+        } else {
+            PointerState.Data = {};
         }
     }
     return Res;
@@ -138,6 +151,7 @@ TransferRet NullAbstractInterpretation::transferPhi(const PHINode* Phi) const
     const auto Loc = AbstractPtrLoc::nextAvailableLoc();
     Res.MemState_[Loc] = PhiRes.value();
     Res.State_[Phi] = Loc;
+    Res.DebugNames_[Phi] = getDebugName(Phi);
     return Res;
 }
 
@@ -147,17 +161,12 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
     auto Res = *this;
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
-        const auto NoAlis = Attrib.hasAttrSomewhere(Attribute::NoAlias);
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
-        auto [Id, Val] = PtrAbstractValue::make();
-        if (NonNull) {
-            Val.IsNull = NullState::NonNull;
-        }
-        if (NoAlis) {
-            Val.IsAlias = AliasState::NoAlias;
-        }
+        auto [Id, Val] = PtrAbstractValue::make(NonNull ? NullState::NonNull
+                                                        : NullState::MaybeNull);
         Res.State_[Call] = Id;
         Res.MemState_[Id] = Val;
+        Res.DebugNames_[Call] = getDebugName(Call);
     }
     return Res;
 }
@@ -172,7 +181,8 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
             Res.State_[Load] = PointerState.Data.value();
         }
     } else if (Pointer->getType()->isPointerTy()) {
-        return insertIntoRes(std::move(Res), Load, PtrAbstractValue::make());
+        return insertIntoRes(std::move(Res), Load,
+                             PtrAbstractValue::make(NullState::MaybeNull));
     }
     return Res;
 }
@@ -221,13 +231,13 @@ NullAbstractInterpretation::pointerCmp(const ICmpInst* Cmp, const Value* LHS,
         (Cmp->getPredicate() == CmpInst::Predicate::ICMP_EQ ||
          Cmp->getPredicate() == CmpInst::Predicate::ICMP_NE)) {
         const auto [NullPtr, NonNullPtr] = Ptrs.value();
-        const static auto InsertIntoResults =
-            [NullPtr, NonNullPtr](auto& NullRes, auto& NonNullRes) {
-                NullRes.MemState_[NullRes.State_[NonNullPtr]].IsNull =
-                    NullState::Null;
-                NonNullRes.MemState_[NonNullRes.State_[NonNullPtr]].IsNull =
-                    NullState::NonNull;
-            };
+        const static auto InsertIntoResults = [NullPtr, NonNullPtr](
+                                                  auto& NullRes,
+                                                  auto& NonNullRes) {
+            NullRes.MemState_.at(NullRes.State_.at(NonNullPtr)).nullify();
+            NonNullRes.MemState_.at(NonNullRes.State_.at(NonNullPtr)).IsNull =
+                NullState::NonNull;
+        };
         if (Cmp->getPredicate() == CmpInst::Predicate::ICMP_EQ) {
             InsertIntoResults(TrueRes, FalseRes);
         } else {
@@ -287,12 +297,10 @@ NullAbstractInterpretation NullAbstractInterpretation::meet(
     for (const auto& Entry : B.State_) {
         if (auto ExistingEntry = Result.State_.find(Entry.first);
             ExistingEntry != Result.State_.end()) {
-            if (ExistingEntry->second != Entry.second) {
-                const auto NewVal =
-                    Result.meetVal(Result.MemState_.at(ExistingEntry->second),
-                                   B.MemState_.at(Entry.second), B);
-                Result.MemState_[ExistingEntry->second] = NewVal;
-            }
+            const auto NewVal =
+                Result.meetVal(Result.MemState_.at(ExistingEntry->second),
+                               B.MemState_.at(Entry.second), B);
+            Result.MemState_[ExistingEntry->second] = NewVal;
         } else {
             Result.State_.insert(Entry);
         }
@@ -306,6 +314,9 @@ NullAbstractInterpretation NullAbstractInterpretation::meet(
             Result.MemState_.insert(Entry);
         }
     }
+    for (const auto& [Val, Name] : B.DebugNames_) {
+        Result.DebugNames_[Val] = Name;
+    }
     return Result;
 }
 bool NullAbstractInterpretation::areAbstractValEq(
@@ -315,10 +326,7 @@ bool NullAbstractInterpretation::areAbstractValEq(
     if (A.IsNull != B.IsNull) {
         return false;
     }
-    if (A.IsAlias != B.IsAlias) {
-        return false;
-    }
-    if (A.Data == B.Data) {
+    if (!A.Data.has_value() && !B.Data.has_value()) {
         return true;
     }
     if (A.Data.has_value() && B.Data.has_value()) {
@@ -367,5 +375,5 @@ PtrAbstractValue NullAbstractInterpretation::getAbstractVal(
     if (const auto It = State_.find(Val); It != State_.end()) {
         return MemState_.at(It->second);
     }
-    return PtrAbstractValue{};
+    return PtrAbstractValue{NullState::MaybeNull};
 }

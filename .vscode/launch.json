@@ -21,9 +21,9 @@
                 "-clear-ast-before-backend",
                 "-disable-llvm-verifier",
                 "-discard-value-names",
-                "-main-file-name",
-                // MAIN FILE NAME
-                "LoopOk.cc",
+                // "-main-file-name",
+                // // MAIN FILE NAME
+                // "LoopOk.cc",
                 "-mrelocation-model",
                 "pic",
                 "-pic-level",
@@ -80,7 +80,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/null-check/passes/LoopOk.cc",
+                "./test/null-check/passes/BranchOk.cc",
             ],
             "cwd": "${workspaceFolder}"
         }
