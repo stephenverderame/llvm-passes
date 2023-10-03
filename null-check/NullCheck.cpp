@@ -86,8 +86,8 @@ auto displayDebugInfo(const Instruction& Inst)
     const Value* Ptr, const Instruction& Inst, PtrUseType UseType)
 {
     const auto InFacts = AnalysisResult.InstructionInFacts.at(&Inst);
-    const auto& AbstractVal = InFacts.MemState_.at(InFacts.State_.at(Ptr));
-    if (AbstractVal.IsNull_ != NullState::NonNull) {
+    const auto& AbstractVal = InFacts.getAbstractVal(Ptr);
+    if (AbstractVal.IsNull != NullState::NonNull) {
         errs() << "\033[31mSafety Violation\033[00m: Use of potentially "
                   "null pointer in "
                << displayUseType(UseType) << " at " << displayDebugInfo(Inst)

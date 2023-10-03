@@ -125,15 +125,7 @@ template <Fact F>
 struct DataFlowFacts {
     std::map<const llvm::Instruction*, F> InstructionInFacts;
 
-    bool operator==(const DataFlowFacts& Other) const
-    {
-        return InstructionInFacts == Other.InstructionInFacts;
-    }
-
-    bool operator!=(const DataFlowFacts& Other) const
-    {
-        return !(*this == Other);
-    }
+    bool operator==(const DataFlowFacts& Other) const = default;
 };
 
 /**

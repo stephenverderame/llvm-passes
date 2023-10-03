@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.6)
-project(Skeleton)
+project(cs6120-llvm)
 
 # LLVM uses C++17.
 set(CMAKE_CXX_STANDARD 20)
