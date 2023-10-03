@@ -19,12 +19,14 @@ using namespace llvm;
 
 namespace
 {
+/// The type of a pointer use
 enum class PtrUseType {
     Load,
     Store,
     GEP,
 };
 
+/// Type of pointer use to string
 auto displayUseType(PtrUseType UseType)
 {
     switch (UseType) {
@@ -39,6 +41,13 @@ auto displayUseType(PtrUseType UseType)
     }
 }
 
+/**
+ * @brief Displays line and file information for an instruction if it exists,
+ * otherwise, pretty-prints the llvm instruction.
+ *
+ * @param Inst
+ * @return std::string
+ */
 auto displayDebugInfo(const Instruction& Inst)
 {
     const auto DebugLoc = Inst.getDebugLoc();
@@ -61,12 +70,23 @@ auto displayDebugInfo(const Instruction& Inst)
     }
 }
 
+/**
+ * @brief Prints a safety violation message and returns true if the pointer
+ * operand of the given instruction is potentially null.
+ * Otherwise, returns false.
+ *
+ * @param AnalysisResult The result of the null analysis
+ * @param Ptr The pointer operand of the instruction
+ * @param Inst The instruction
+ * @param UseType The type of pointer use
+ * @return true if the instruction potentially uses a null pointer
+ */
 [[nodiscard]] auto checkPtrOpSafety(
     const DataFlowFacts<NullAbstractInterpretation>& AnalysisResult,
     const Value* Ptr, const Instruction& Inst, PtrUseType UseType)
 {
     const auto InFacts = AnalysisResult.InstructionInFacts.at(&Inst);
-    const auto AbstractVal = InFacts.State_.at(Ptr);
+    const auto& AbstractVal = InFacts.MemState_.at(InFacts.State_.at(Ptr));
     if (AbstractVal.IsNull_ != NullState::NonNull) {
         errs() << "\033[31mSafety Violation\033[00m: Use of potentially "
                   "null pointer in "
@@ -77,6 +97,15 @@ auto displayDebugInfo(const Instruction& Inst)
     return false;
 }
 
+/**
+ * @brief Checks if any instruction in the given function uses a potentially
+ * null pointer.
+ * If so, prints a safety violation message and returns true.
+ *
+ * @param F The function
+ * @param AnalysisResult The result of the null analysis
+ * @return true if the function contains a safety violation
+ */
 [[nodiscard]] auto checkInstSafety(
     Function& F,
     const DataFlowFacts<NullAbstractInterpretation>& AnalysisResult)

@@ -1,122 +1,114 @@
 #pragma once
 #include <llvm-17/llvm/IR/Value.h>
 
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "df/DataFlow.hpp"
 
+/**
+ * @brief The state of a pointer
+ */
 enum class NullState : uint8_t {
     Null = 0,
     NonNull,
     Unknown,
 };
 
+/**
+ * @brief The state of a pointer alias
+ */
 enum class AliasState : uint8_t {
     Alias = 0,
     NoAlias,
     Unknown,
 };
 
+class AbstractPtrLoc
+{
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+    inline static int64_t g_NextId = 0;
+
+  public:
+    int64_t Id;
+
+    auto operator<=>(const AbstractPtrLoc&) const = default;
+
+    static auto nextAvailableLoc() { return AbstractPtrLoc{g_NextId++}; }
+};
+
+struct AbstractPtrOffset {
+    int64_t Off;
+
+    auto operator<=>(const AbstractPtrOffset&) const = default;
+};
+
+class NullAbstractInterpretation;
+
+/**
+ * @brief Abstract value for a pointer type
+ *
+ */
 struct PtrAbstractValue {
+    /// If the value is known to be null.
     NullState IsNull_ = NullState::Unknown;
-    /// The value is known to be non-aliasing.
+    /// If the value is known to be non-aliasing.
     AliasState IsAlias_ = AliasState::Unknown;
     /// The value of the data referred to be the pointer, may be null.
-    std::unique_ptr<PtrAbstractValue> Data_;
+    std::optional<AbstractPtrLoc> Data_;
 
-    inline bool operator==(const PtrAbstractValue& Other) const
-    {
-        const auto Cmp = IsNull_ == Other.IsNull_ && IsAlias_ == Other.IsAlias_;
-        if (Data_ != nullptr && Other.Data_ != nullptr) {
-            return Cmp && *Data_ == *Other.Data_;
-        } else if (Data_ == nullptr && Other.Data_ == nullptr) {
-            return Cmp;
-        } else {
-            return false;
-        }
-    }
+    inline bool operator==(const PtrAbstractValue& Other) const = default;
 
-    inline PtrAbstractValue(const PtrAbstractValue& Other)
-        : IsNull_(Other.IsNull_),
-          IsAlias_(Other.IsAlias_),
-          Data_(Other.Data_ == nullptr
-                    ? nullptr
-                    : std::make_unique<PtrAbstractValue>(*Other.Data_))
-    {
-    }
-
-    inline PtrAbstractValue& operator=(const PtrAbstractValue& Other)
-    {
-        IsNull_ = Other.IsNull_;
-        IsAlias_ = Other.IsAlias_;
-        Data_ = Other.Data_ == nullptr
-                    ? nullptr
-                    : std::make_unique<PtrAbstractValue>(*Other.Data_);
-        return *this;
-    }
-
-    PtrAbstractValue() : Data_(nullptr) {}
-    explicit PtrAbstractValue(NullState K) : IsNull_(K), Data_(nullptr) {}
+    PtrAbstractValue() = default;
+    explicit PtrAbstractValue(NullState K) : IsNull_(K), Data_() {}
     PtrAbstractValue(NullState K, AliasState A)
-        : IsNull_(K), IsAlias_(A), Data_(nullptr)
+        : IsNull_(K), IsAlias_(A), Data_()
     {
     }
-
-    ~PtrAbstractValue() = default;
-    PtrAbstractValue(PtrAbstractValue&&) = default;
-    PtrAbstractValue& operator=(PtrAbstractValue&&) = default;
 
     /// Construct a new non-aliasing pointer abstract value.
-    inline static auto newNonAlias(NullState K)
+    inline static auto makeNonAlias(NullState K)
     {
         auto Result = PtrAbstractValue{K};
         Result.IsAlias_ = AliasState::NoAlias;
-        return Result;
+        return std::make_tuple(AbstractPtrLoc::nextAvailableLoc(), Result);
     }
 
-    static PtrAbstractValue meet(const PtrAbstractValue& A,
-                                 const PtrAbstractValue& B)
+    static auto make()
     {
-        auto Result = PtrAbstractValue{};
-        Result.IsNull_ =
-            A.IsNull_ == B.IsNull_ ? A.IsNull_ : NullState::Unknown;
-        Result.IsAlias_ =
-            A.IsAlias_ == B.IsAlias_ ? A.IsAlias_ : AliasState::Unknown;
-        if (A.Data_ != nullptr && B.Data_ != nullptr) {
-            Result.Data_ =
-                std::make_unique<PtrAbstractValue>(meet(*A.Data_, *B.Data_));
-        } else {
-            Result.Data_ = nullptr;
-        }
-        return Result;
+        return std::make_tuple(AbstractPtrLoc::nextAvailableLoc(),
+                               PtrAbstractValue{});
     }
+
+    /**
+     * @brief Returns a new Abstract Value that is the greatest lower
+     * bound of the two given values.
+     *
+     * @param A
+     * @param B
+     * @return PtrAbstractValue
+     */
+    static PtrAbstractValue meet(const PtrAbstractValue& A,
+                                 const PtrAbstractValue& B,
+                                 NullAbstractInterpretation& Context,
+                                 const NullAbstractInterpretation& ContextB);
 };
 struct NullAbstractInterpretation {
-    /// The known abstract values
-    std::unordered_map<const llvm::Value*, PtrAbstractValue> State_;
+    /// Mapping from syntactic pointers to abstract pointer locations
+    std::unordered_map<const llvm::Value*, AbstractPtrLoc> State_;
+    /// The known abstract values for memory locations
+    std::map<AbstractPtrLoc, PtrAbstractValue> MemState_;
 
-    static auto meet(const NullAbstractInterpretation& A,
-                     const NullAbstractInterpretation& B)
-    {
-        // LLVM is SSA, so this is pretty simple since we don't have to worry
-        // about the same variable having different values.
-        auto Result = A;
-        for (const auto& Entry : B.State_) {
-            Result.State_.insert(Entry);
-        }
-        return Result;
-    }
+    static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
+                                           const NullAbstractInterpretation& B);
 
-    std::vector<NullAbstractInterpretation> transfer(
+    TransferRetType<NullAbstractInterpretation> transfer(
         const llvm::Instruction& I) const;
 
     using Dir = Forwards;
 
-    bool operator==(const NullAbstractInterpretation& Other) const
-    {
-        return State_ == Other.State_;
-    }
+    bool operator==(const NullAbstractInterpretation& Other) const = default;
 };
 
 static_assert(Fact<NullAbstractInterpretation>);

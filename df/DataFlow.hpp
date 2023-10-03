@@ -9,6 +9,7 @@
 #include <iterator>
 #include <map>
 #include <type_traits>
+#include <variant>
 
 /// Bare bones concept for checking if a type is iterable.
 template <typename T>
@@ -40,6 +41,9 @@ concept Direction = requires(T) {
     } -> std::incrementable;
 };
 
+template <typename T>
+using TransferRetType = std::variant<std::map<const llvm::BasicBlock*, T>, T>;
+
 /**
  * @brief Dataflow analysis fact
  *
@@ -55,7 +59,7 @@ concept Fact = requires(const T& t) {
     /// Transfer function for an instruction
     {
         t.transfer(std::declval<const llvm::Instruction&>())
-    } -> std::convertible_to<std::vector<T>>;
+    } -> std::convertible_to<TransferRetType<T>>;
 
     requires std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>;
 
@@ -71,14 +75,20 @@ concept Fact = requires(const T& t) {
  *
  */
 struct Forwards {
-    static auto successors(const llvm::BasicBlock& BB)
+    [[nodiscard]] static auto successors(const llvm::BasicBlock& BB)
     {
         return llvm::successors(&BB);
     }
 
-    static auto begin(const llvm::BasicBlock& BB) { return BB.begin(); }
+    [[nodiscard]] static auto begin(const llvm::BasicBlock& BB)
+    {
+        return BB.begin();
+    }
 
-    static auto end(const llvm::BasicBlock& BB) { return BB.end(); }
+    [[nodiscard]] static auto end(const llvm::BasicBlock& BB)
+    {
+        return BB.end();
+    }
 };
 
 static_assert(Direction<Forwards>);
@@ -88,14 +98,20 @@ static_assert(Direction<Forwards>);
  *
  */
 struct Backwards {
-    static auto successors(const llvm::BasicBlock& BB)
+    [[nodiscard]] static auto successors(const llvm::BasicBlock& BB)
     {
         return llvm::predecessors(&BB);
     }
 
-    static auto begin(const llvm::BasicBlock& BB) { return BB.rbegin(); }
+    [[nodiscard]] static auto begin(const llvm::BasicBlock& BB)
+    {
+        return BB.rbegin();
+    }
 
-    static auto end(const llvm::BasicBlock& BB) { return BB.rend(); }
+    [[nodiscard]] static auto end(const llvm::BasicBlock& BB)
+    {
+        return BB.rend();
+    }
 };
 
 static_assert(Direction<Backwards>);
@@ -130,26 +146,24 @@ struct DataFlowFacts {
  * @param Facts
  */
 template <Fact F>
-DataFlowFacts<F>& broadcastOutFacts(const llvm::BasicBlock& BB,
-                                    const std::vector<F>& Out,
-                                    DataFlowFacts<F>& Facts)
+DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
+                                   const TransferRetType<F>& Out,
+                                   DataFlowFacts<F> Facts)
 {
     using Dir = typename F::Dir;
-    if (Out.empty()) {
-        return Facts;
-    }
-    if (Out.size() == 1) {
+    if (std::holds_alternative<F>(Out)) {
         for (const auto& Succ : Dir::successors(BB)) {
-            Facts.InstructionInFacts[&*Dir::begin(*Succ)] = Out[0];
+            const auto& SuccFirstInst = *Dir::begin(*Succ);
+            Facts.InstructionInFacts[&SuccFirstInst] = F::meet(
+                Facts.InstructionInFacts[&SuccFirstInst], std::get<F>(Out));
         }
     } else {
-        auto It = Out.begin();
+        const auto& OutMap = std::get<0>(Out);
         for (const auto& Succ : Dir::successors(BB)) {
             const auto& SuccBB = *Succ;
             const auto& SuccFirstInst = *Dir::begin(SuccBB);
-            Facts.InstructionInFacts[&SuccFirstInst] =
-                F::meet(Facts.InstructionInFacts[&SuccFirstInst], *It);
-            ++It;
+            Facts.InstructionInFacts[&SuccFirstInst] = F::meet(
+                Facts.InstructionInFacts[&SuccFirstInst], OutMap.at(&SuccBB));
         }
     }
     return Facts;
@@ -180,18 +194,15 @@ DataFlowFacts<F> analyze(const llvm::Function& Func, F Top)
         const auto& BB = Worklist.front();
         Worklist.pop_front();
 
-        auto LastOut =
+        TransferRetType<F> LastOut =
             Dir::begin(BB) != Dir::end(BB)
-                ? std::vector{Facts.InstructionInFacts[&*Dir::begin(BB)]}
-                : std::vector{Top};
+                ? Facts.InstructionInFacts[&*Dir::begin(BB)]
+                : Top;
         for (auto I = Dir::begin(BB); I != Dir::end(BB); ++I) {
             const auto& Inst = *I;
-            assert(LastOut.size() == 1);
-            Facts.InstructionInFacts[&Inst] = LastOut[0];
-            LastOut = LastOut[0].transfer(Inst);
-            if (LastOut.empty()) {
-                LastOut = {Top};
-            }
+            assert(std::holds_alternative<F>(LastOut));
+            Facts.InstructionInFacts[&Inst] = std::get<F>(LastOut);
+            LastOut = std::get<F>(LastOut).transfer(Inst);
         }
         const auto NewFacts = broadcastOutFacts(BB, LastOut, Facts);
         if (NewFacts != Facts) {

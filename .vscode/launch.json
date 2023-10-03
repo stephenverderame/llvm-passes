@@ -23,7 +23,7 @@
                 "-discard-value-names",
                 "-main-file-name",
                 // MAIN FILE NAME
-                "alloc.cc",
+                "BranchBad2.cc",
                 "-mrelocation-model",
                 "pic",
                 "-pic-level",
@@ -80,7 +80,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/alloc.cc",
+                "./test/null-check/violations/BranchBad2.cc",
             ],
             "cwd": "${workspaceFolder}"
         }
