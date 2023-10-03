@@ -64,23 +64,24 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
 {
     auto Result = A;
     Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::MaybeNull;
-    if (A.Data.has_value() && B.Data.has_value()) {
-        const auto& AData = MemState_.at(*A.Data);
-        const auto& BData = ContextB.MemState_.at(*B.Data);
-        if (!areAbstractValEq(AData, BData, ContextB)) {
-            const auto Meet = meetVal(AData, BData, ContextB);
-            const auto Loc = AbstractPtrLoc::nextAvailableLoc();
-            Result.Data = Loc;
-            MemState_[Loc] = Meet;
-        } else {
-            Result.Data = A.Data;
+    if (Result.IsNull == NullState::NonNull) {
+        if (A.Data.has_value() && B.Data.has_value()) {
+            const auto& AData = MemState_.at(*A.Data);
+            const auto& BData = ContextB.MemState_.at(*B.Data);
+            if (!areAbstractValEq(AData, BData, ContextB)) {
+                const auto Meet = meetVal(AData, BData, ContextB);
+                const auto Loc = AbstractPtrLoc::nextAvailableLoc();
+                Result.Data = Loc;
+                MemState_[Loc] = Meet;
+            } else {
+                Result.Data = A.Data;
+            }
+        } else if (!A.Data.has_value()) {
+            // Memory for B.Data inserted from parent call to
+            // NullAbstractInterpretation::meet
+            Result.Data = B.Data;
         }
-    } else if (!A.Data.has_value()) {
-        // Memory for B.Data inserted from parent call to
-        // NullAbstractInterpretation::meet
-        Result.Data = B.Data;
-    }
-    if (Result.IsNull == NullState::MaybeNull) {
+    } else {
         Result.Data = {};
     }
     return Result;
@@ -179,6 +180,7 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
         const auto& PointerState = Res.MemState_.at(Res.State_.at(Pointer));
         if (PointerState.Data.has_value()) {
             Res.State_[Load] = PointerState.Data.value();
+            Res.DebugNames_[Load] = getDebugName(Load);
         }
     } else if (Pointer->getType()->isPointerTy()) {
         return insertIntoRes(std::move(Res), Load,
@@ -231,7 +233,7 @@ NullAbstractInterpretation::pointerCmp(const ICmpInst* Cmp, const Value* LHS,
         (Cmp->getPredicate() == CmpInst::Predicate::ICMP_EQ ||
          Cmp->getPredicate() == CmpInst::Predicate::ICMP_NE)) {
         const auto [NullPtr, NonNullPtr] = Ptrs.value();
-        const static auto InsertIntoResults = [NullPtr, NonNullPtr](
+        const static auto InsertIntoResults = [&NullPtr, &NonNullPtr](
                                                   auto& NullRes,
                                                   auto& NonNullRes) {
             NullRes.MemState_.at(NullRes.State_.at(NonNullPtr)).nullify();
@@ -293,7 +295,6 @@ NullAbstractInterpretation NullAbstractInterpretation::meet(
     const NullAbstractInterpretation& A, const NullAbstractInterpretation& B)
 {
     auto Result = A;
-    // review the dataflow
     for (const auto& Entry : B.State_) {
         if (auto ExistingEntry = Result.State_.find(Entry.first);
             ExistingEntry != Result.State_.end()) {
