@@ -46,6 +46,28 @@ std::string getDebugName(const Value* I)
 }  // namespace
 
 /**
+ * @brief Simulates mutating a pointer by updating all uses of the old pointer
+ * with the new pointer location.
+ *
+ * @param OldLoc
+ * @param NewLoc
+ */
+void NullAbstractInterpretation::replaceLoc(AbstractPtrLoc OldLoc,
+                                            AbstractPtrLoc NewLoc)
+{
+    for (auto& [Val, Loc] : State_) {
+        if (Loc == OldLoc) {
+            Loc = NewLoc;
+        }
+    }
+    for (auto& [Loc, Val] : MemState_) {
+        if (Val.Data.has_value() && Val.Data.value() == OldLoc) {
+            Val.Data = NewLoc;
+        }
+    }
+}
+
+/**
  * @brief Returns a new Abstract Value that is the greatest lower
  * bound of the two given values.
  * If meeting the two values requires creation of a new value, the new value
@@ -73,6 +95,7 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
                 const auto Loc = AbstractPtrLoc::nextAvailableLoc();
                 Result.Data = Loc;
                 MemState_[Loc] = Meet;
+                replaceLoc(*A.Data, Loc);
             } else {
                 Result.Data = A.Data;
             }
@@ -356,10 +379,10 @@ bool NullAbstractInterpretation::operator==(
         }
     }
 
-    for (const auto& [Val, PtrLoc] : Other.State_) {
-        if (const auto It = State_.find(Val); It != State_.end()) {
-            if (!areAbstractValEq(MemState_.at(PtrLoc),
-                                  Other.MemState_.at(It->second), Other)) {
+    for (const auto& [OtherVal, OtherPtrLoc] : Other.State_) {
+        if (const auto It = State_.find(OtherVal); It != Other.State_.end()) {
+            if (!areAbstractValEq(MemState_.at(It->second),
+                                  Other.MemState_.at(OtherPtrLoc), Other)) {
                 return false;
             }
         } else {

@@ -136,6 +136,8 @@ class NullAbstractInterpretation
                              const PtrAbstractValue& B,
                              const NullAbstractInterpretation& ContextB);
 
+    void replaceLoc(AbstractPtrLoc OldLoc, AbstractPtrLoc NewLoc);
+
   public:
     static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
                                            const NullAbstractInterpretation& B);
