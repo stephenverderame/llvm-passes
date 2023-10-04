@@ -77,7 +77,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/null-check/passes/Ptr3Malloc.cc",
+                "./test/null-check/passes/NestedLoop.cc",
             ],
             "cwd": "${workspaceFolder}"
         }

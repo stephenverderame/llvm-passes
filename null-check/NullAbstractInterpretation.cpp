@@ -124,7 +124,8 @@ TransferRet NullAbstractInterpretation::transferStore(
             const auto& ValueState = Res.State_.at(Value);
             PointerState.Data = ValueState;
         } else if (Value->getType()->isPointerTy()) {
-            auto [NewId, NewVal] = PtrAbstractValue::make(NullState::MaybeNull);
+            const auto [NewId, NewVal] =
+                PtrAbstractValue::make(NullState::MaybeNull);
             PointerState.Data = NewId;
             Res.State_[Value] = NewId;
             Res.MemState_[NewId] = NewVal;
@@ -163,8 +164,8 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
-        auto [Id, Val] = PtrAbstractValue::make(NonNull ? NullState::NonNull
-                                                        : NullState::MaybeNull);
+        const auto [Id, Val] = PtrAbstractValue::make(
+            NonNull ? NullState::NonNull : NullState::MaybeNull);
         Res.State_[Call] = Id;
         Res.MemState_[Id] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
@@ -233,9 +234,8 @@ NullAbstractInterpretation::pointerCmp(const ICmpInst* Cmp, const Value* LHS,
         (Cmp->getPredicate() == CmpInst::Predicate::ICMP_EQ ||
          Cmp->getPredicate() == CmpInst::Predicate::ICMP_NE)) {
         const auto [NullPtr, NonNullPtr] = Ptrs.value();
-        const static auto InsertIntoResults = [&NullPtr, &NonNullPtr](
-                                                  auto& NullRes,
-                                                  auto& NonNullRes) {
+        const auto InsertIntoResults = [NonNullPtr](auto& NullRes,
+                                                    auto& NonNullRes) {
             NullRes.MemState_.at(NullRes.State_.at(NonNullPtr)).nullify();
             NonNullRes.MemState_.at(NonNullRes.State_.at(NonNullPtr)).IsNull =
                 NullState::NonNull;
