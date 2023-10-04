@@ -62,6 +62,20 @@ template <typename T>
 using TransferRetType = std::variant<std::map<const llvm::BasicBlock*, T>, T>;
 
 /**
+ * @brief Mapping from instructions to facts
+ *
+ * @tparam F
+ */
+template <typename F>
+struct DataFlowFacts {
+    /// @brief The incoming facts for each instruction.
+    std::map<const llvm::Instruction*, F> InstructionInFacts;
+    std::map<const llvm::BasicBlock*, TransferRetType<F>> BlockOutFacts;
+
+    bool operator==(const DataFlowFacts& Other) const = default;
+};
+
+/**
  * @brief Dataflow analysis fact.
  * A Fact must have a static `meet` function, a `transfer` method which takes
  * an instruction and returns a new fact, and a `Dir` type which is a
@@ -74,9 +88,15 @@ concept Fact = requires(const T& t) {
         T::meet(t, t)
     } -> std::convertible_to<T>;
 
-    /// Transfer function for an instruction
+    /**
+     * @brief Transfer function for a fact.
+     * @param I The instruction to transfer
+     * @param Facts The current set of facts
+     * @return The outgoing fact for I
+     */
     {
-        t.transfer(std::declval<const llvm::Instruction&>())
+        t.transfer(std::declval<const llvm::Instruction&>(),
+                   std::declval<const DataFlowFacts<T>&>())
     } -> std::convertible_to<TransferRetType<T>>;
 
     requires std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>;
@@ -134,19 +154,6 @@ struct Backwards {
 static_assert(Direction<Backwards>);
 
 /**
- * @brief Mapping from instructions to facts
- *
- * @tparam F
- */
-template <Fact F>
-struct DataFlowFacts {
-    /// @brief The incoming facts for each instruction.
-    std::map<const llvm::Instruction*, F> InstructionInFacts;
-
-    bool operator==(const DataFlowFacts& Other) const = default;
-};
-
-/**
  * @brief Meets each output fact with the existing input fact for each
  * successor of the basic block.
  *
@@ -166,6 +173,7 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
                                    DataFlowFacts<F> Facts)
 {
     using Dir = typename F::Dir;
+    Facts.BlockOutFacts[&BB] = Out;
     if (std::holds_alternative<F>(Out)) {
         for (const auto& Succ : Dir::successors(BB)) {
             const auto& SuccFirstInst = *Dir::begin(*Succ);
@@ -217,7 +225,7 @@ DataFlowFacts<F> analyze(const llvm::Function& Func, F Top)
             const auto& Inst = *I;
             assert(std::holds_alternative<F>(LastOut));
             Facts.InstructionInFacts[&Inst] = std::get<F>(LastOut);
-            LastOut = std::get<F>(LastOut).transfer(Inst);
+            LastOut = std::get<F>(LastOut).transfer(Inst, Facts);
         }
         const auto NewFacts = broadcastOutFacts(BB, LastOut, Facts);
         if (NewFacts != Facts) {

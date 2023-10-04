@@ -2,6 +2,7 @@
 // NOLINTBEGIN
 int main()
 {
+    bool f = true;
     int** p = (int**)malloc(sizeof(int**));
     int i = 0;
     while (p) {

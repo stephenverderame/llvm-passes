@@ -15,7 +15,6 @@ enum class NullState : uint8_t {
     /// @brief Definitely not null
     NonNull,
 };
-
 class NullAbstractInterpretation;
 struct PtrAbstractValue;
 /// A mapping from LLVM values to abstract pointer locations
@@ -120,7 +119,12 @@ class NullAbstractInterpretation
     TransferRet transferStore(const llvm::StoreInst* Store) const;
     TransferRet transferCall(const llvm::CallInst* Call) const;
     TransferRet transferPhi(const llvm::PHINode* Phi) const;
-    TransferRet transferBranch(const llvm::BranchInst* Branch) const;
+    TransferRet transferBranch(
+        const llvm::BranchInst* Branch,
+        const DataFlowFacts<NullAbstractInterpretation>& Facts) const;
+    std::tuple<NullAbstractInterpretation, NullAbstractInterpretation>
+    backpropCond(const llvm::Value* Cond,
+                 const DataFlowFacts<NullAbstractInterpretation>& Facts) const;
     static NullAbstractInterpretation insertIntoRes(
         NullAbstractInterpretation Res, const llvm::Value* Value,
         std::shared_ptr<PtrAbstractValue>&& Ptr);
@@ -143,7 +147,8 @@ class NullAbstractInterpretation
 
     /// @see Fact::transfer
     TransferRetType<NullAbstractInterpretation> transfer(
-        const llvm::Instruction& I) const;
+        const llvm::Instruction& I,
+        const DataFlowFacts<NullAbstractInterpretation>& Facts) const;
 
     using Dir = Forwards;
 
