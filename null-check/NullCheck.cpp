@@ -158,7 +158,7 @@ llvmGetPassPluginInfo()
             .RegisterPassBuilderCallbacks = [](PassBuilder& PB) {
                 PB.registerPipelineStartEPCallback(
                     [](ModulePassManager& MPM, OptimizationLevel /* Level */) {
-                        MPM.addPass(NullCheckPass());
+                        MPM.addPass(NullCheckPass{});
                     });
             }};
 }

@@ -42,23 +42,23 @@ std::string getDebugName(const Value* I)
     // Res = Res.substr(0, Res.find_first_of(" "));
     return Res;
 }
+}  // namespace
 
-bool areAbstractValEq(const PtrAbstractValue& A, const PtrAbstractValue& B)
+bool PtrAbstractValue::operator==(const PtrAbstractValue& Other) const
 {
-    if (A.IsNull != B.IsNull) {
+    if (IsNull != Other.IsNull) {
         return false;
     }
-    if (!A.Data && !B.Data) {
+    if (!Data && !Other.Data) {
         return true;
     }
-    if (A.Data && B.Data) {
-        const auto& AData = *A.Data;
-        const auto& BData = *B.Data;
-        return areAbstractValEq(AData, BData);
+    if (Data && Other.Data) {
+        const auto& AData = *Data;
+        const auto& BData = *Other.Data;
+        return AData == BData;
     }
     return false;
 }
-}  // namespace
 
 /**
  * @brief Returns a new Abstract Value that is the greatest lower
@@ -83,7 +83,7 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
         if (A.Data && B.Data) {
             const auto& AData = *A.Data;
             const auto& BData = *B.Data;
-            if (!areAbstractValEq(AData, BData)) {
+            if (AData != BData) {
                 const auto Meet = meetVal(AData, BData, ContextB);
                 *Result.Data = Meet;
             } else {
@@ -327,7 +327,7 @@ bool NullAbstractInterpretation::operator==(
     for (const auto& [Val, Ptr] : State_) {
         if (const auto OtherIt = Other.State_.find(Val);
             OtherIt != Other.State_.end()) {
-            if (!areAbstractValEq(*Ptr, *OtherIt->second)) {
+            if (*Ptr != *OtherIt->second) {
                 return false;
             }
         } else {
@@ -337,7 +337,7 @@ bool NullAbstractInterpretation::operator==(
 
     for (const auto& [OtherVal, OtherPtr] : Other.State_) {
         if (const auto It = State_.find(OtherVal); It != Other.State_.end()) {
-            if (!areAbstractValEq(*It->second, *OtherPtr)) {
+            if (*It->second != *OtherPtr) {
                 return false;
             }
         } else {

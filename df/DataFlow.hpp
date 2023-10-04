@@ -1,3 +1,10 @@
+/**
+ * @file DataFlow.hpp
+ * Generalized Dataflow framework for LLVM.
+ * Very similar in implementation to my generalized dataflow framework for
+ * BRIL written in Rust
+ * [here](https://github.com/stephenverderame/cs6120-bril/blob/main/cfg/src/analysis/mod.rs)
+ */
 #pragma once
 #include <bits/iterator_concepts.h>
 #include <llvm-17/llvm/IR/BasicBlock.h>
@@ -22,7 +29,13 @@ concept Iterable = requires(T t) {
     };
 };
 
-/// Dataflow analysis direction
+/**
+ * @brief Dataflow analysis direction.
+ * A Direction must have a static `successors` function which returns an
+ * iterable of basic blocks, a `begin` function which returns an iterator to
+ * the first instruction in the basic block, and an `end` function which
+ * returns a sentinel for the end of the basic block.
+ */
 template <typename T>
 concept Direction = requires(T) {
     /// Get the successors of a basic block with respect to the direction.
@@ -41,13 +54,18 @@ concept Direction = requires(T) {
     } -> std::incrementable;
 };
 
+/**
+ * @brief The return type of a transfer function for a Fact `T`
+ * @tparam T The fact type
+ */
 template <typename T>
 using TransferRetType = std::variant<std::map<const llvm::BasicBlock*, T>, T>;
 
 /**
- * @brief Dataflow analysis fact
- *
- * @tparam T
+ * @brief Dataflow analysis fact.
+ * A Fact must have a static `meet` function, a `transfer` method which takes
+ * an instruction and returns a new fact, and a `Dir` type which is a
+ * Direction. It must also be equality comparable and copyable.
  */
 template <typename T>
 concept Fact = requires(const T& t) {
@@ -72,7 +90,6 @@ concept Fact = requires(const T& t) {
 
 /**
  * @brief Forwards dataflow analysis direction
- *
  */
 struct Forwards {
     [[nodiscard]] static auto successors(const llvm::BasicBlock& BB)
@@ -123,6 +140,7 @@ static_assert(Direction<Backwards>);
  */
 template <Fact F>
 struct DataFlowFacts {
+    /// @brief The incoming facts for each instruction.
     std::map<const llvm::Instruction*, F> InstructionInFacts;
 
     bool operator==(const DataFlowFacts& Other) const = default;
@@ -132,10 +150,15 @@ struct DataFlowFacts {
  * @brief Meets each output fact with the existing input fact for each
  * successor of the basic block.
  *
- * @tparam F
- * @param BB
- * @param Out
- * @param Facts
+ * If `Out` is a single fact, applies that fact to all successors. Otherwise
+ * `Out` should be a map from basic blocks to facts. In which case we apply
+ * the corresponding fact to each successor.
+ *
+ * @tparam F The fact type
+ * @param BB The basic block
+ * @param Out The output fact
+ * @param Facts The current set of facts
+ * @return The new set of facts
  */
 template <Fact F>
 DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,

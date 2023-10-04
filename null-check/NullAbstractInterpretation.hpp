@@ -35,20 +35,22 @@ struct PtrAbstractValue {
     /// The value of the data referred to be the pointer, may be null.
     std::shared_ptr<PtrAbstractValue> Data = nullptr;
 
+    /// @brief Constructs a TOP abstract value
     PtrAbstractValue() = default;
     explicit PtrAbstractValue(NullState K) : IsNull(K), Data() {}
 
     /**
-     * @brief Constructs a new abstract location and abstract value which is
-     * equal to bottom.
-     *
-     * @return tuple of the new location and abstract value
+     * @brief Constructs a new abstract location and abstract value which has
+     * the given NullState and no data (not a pointer to a pointer).
      */
     static auto make(NullState N)
     {
         return std::make_shared<PtrAbstractValue>(N);
     }
 
+    /**
+     * @brief Makes the abstract value a null pointer.
+     */
     void nullify()
     {
         IsNull = NullState::MaybeNull;
@@ -69,6 +71,8 @@ struct PtrAbstractValue {
         std::unordered_map<const PtrAbstractValue*,
                            std::shared_ptr<PtrAbstractValue>>& ClonedVals)
         const;
+
+    bool operator==(const PtrAbstractValue& Other) const;
 };
 /// Forward declarations
 namespace llvm
@@ -86,10 +90,17 @@ class ICmpInst;
 /**
  * @brief Data flow analysis to determine whether a pointer is null, nonnull,
  * or unknown. Based off conditional constant propagation.
- * TOP: Set of all values as unknown (empty set)
- * BOTTOM: Set of all values as potentially null
- * MEET: meet of particular value (union, except if both values are specified,
- * then meet of the respective values)
+ *
+ *
+ * TOP: Set of all values as unknown (representing unknown value as not in the
+ * set, so this is concretely the empty set)
+ *
+ *
+ * BOTTOM: Set of all values as potentially null.
+ *
+ *
+ * MEET: meet of particular value (union, except if both values
+ * are specified, then meet of the respective values)
  *
  */
 class NullAbstractInterpretation
@@ -101,7 +112,7 @@ class NullAbstractInterpretation
     /// Mapping from syntactic pointers to abstract pointer locations
     std::unordered_map<const llvm::Value*, std::shared_ptr<PtrAbstractValue>>
         State_;
-    /// Mapping from values to their names
+    /// Mapping from values to their names (ie. "%0") for debugging
     std::unordered_map<const llvm::Value*, std::string> DebugNames_;
 
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
@@ -126,9 +137,11 @@ class NullAbstractInterpretation
                              const NullAbstractInterpretation& ContextB);
 
   public:
+    /// @see Fact::meet
     static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
                                            const NullAbstractInterpretation& B);
 
+    /// @see Fact::transfer
     TransferRetType<NullAbstractInterpretation> transfer(
         const llvm::Instruction& I) const;
 
