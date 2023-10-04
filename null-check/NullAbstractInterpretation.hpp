@@ -16,32 +16,11 @@ enum class NullState : uint8_t {
     NonNull,
 };
 
-/**
- * @brief A location which an abstract pointer can point to.
- *
- */
-class AbstractPtrLoc
-{
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-    inline static int64_t g_NextId = 0;
-
-  public:
-    int64_t Id;
-
-    auto operator<=>(const AbstractPtrLoc&) const = default;
-
-    /**
-     * @brief Returns a fresh, unused location.
-     */
-    static auto nextAvailableLoc() { return AbstractPtrLoc{g_NextId++}; }
-};
-
 class NullAbstractInterpretation;
 struct PtrAbstractValue;
-/// A mapping from abstract pointer locations to abstract pointer values
-using NullAbstractMem = std::map<AbstractPtrLoc, PtrAbstractValue>;
 /// A mapping from LLVM values to abstract pointer locations
-using NullAbstractVals = std::unordered_map<const llvm::Value*, AbstractPtrLoc>;
+using NullAbstractVals =
+    std::unordered_map<const llvm::Value*, std::shared_ptr<PtrAbstractValue>>;
 
 /**
  * @brief Abstract value for a pointer type.
@@ -54,7 +33,7 @@ struct PtrAbstractValue {
     /// If the value is known to be null.
     NullState IsNull = NullState::MaybeNull;
     /// The value of the data referred to be the pointer, may be null.
-    std::optional<AbstractPtrLoc> Data;
+    std::shared_ptr<PtrAbstractValue> Data = nullptr;
 
     PtrAbstractValue() = default;
     explicit PtrAbstractValue(NullState K) : IsNull(K), Data() {}
@@ -67,8 +46,7 @@ struct PtrAbstractValue {
      */
     static auto make(NullState N)
     {
-        return std::make_tuple(AbstractPtrLoc::nextAvailableLoc(),
-                               PtrAbstractValue{N});
+        return std::make_shared<PtrAbstractValue>(N);
     }
 
     void nullify()
@@ -76,6 +54,21 @@ struct PtrAbstractValue {
         IsNull = NullState::MaybeNull;
         Data.reset();
     }
+
+    /**
+     * @brief Constructs a deep clone of the current abstract value. If `this`
+     * or any of its children have already been cloned, the existing clone is
+     * returned from `ClonedVals`. `ClonedVals` is updated with the new clone
+     * and its children (if not already present).
+     *
+     * @param ClonedVals the cache of already cloned pointers so that we
+     * don't create two unique memory locations when there should only be one.
+     * @return std::shared_ptr<PtrAbstractValue>
+     */
+    std::shared_ptr<PtrAbstractValue> clone(
+        std::unordered_map<const PtrAbstractValue*,
+                           std::shared_ptr<PtrAbstractValue>>& ClonedVals)
+        const;
 };
 /// Forward declarations
 namespace llvm
@@ -106,14 +99,10 @@ class NullAbstractInterpretation
 
   private:
     /// Mapping from syntactic pointers to abstract pointer locations
-    std::unordered_map<const llvm::Value*, AbstractPtrLoc> State_;
-    /// The known abstract values for memory locations
-    std::map<AbstractPtrLoc, PtrAbstractValue> MemState_;
+    std::unordered_map<const llvm::Value*, std::shared_ptr<PtrAbstractValue>>
+        State_;
     /// Mapping from values to their names
     std::unordered_map<const llvm::Value*, std::string> DebugNames_;
-
-    bool areAbstractValEq(const PtrAbstractValue& A, const PtrAbstractValue& B,
-                          const NullAbstractInterpretation& BContext) const;
 
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
     TransferRet transferLoad(const llvm::LoadInst* Load) const;
@@ -123,7 +112,7 @@ class NullAbstractInterpretation
     TransferRet transferBranch(const llvm::BranchInst* Branch) const;
     static NullAbstractInterpretation insertIntoRes(
         NullAbstractInterpretation Res, const llvm::Value* Value,
-        std::tuple<AbstractPtrLoc, PtrAbstractValue>&& KV);
+        std::shared_ptr<PtrAbstractValue>&& Ptr);
 
     std::optional<std::tuple<const llvm::Value*, const llvm::Value*>>
     getNullNonNullPtr(const llvm::Value* LHS, const llvm::Value* RHS) const;
@@ -135,8 +124,6 @@ class NullAbstractInterpretation
     PtrAbstractValue meetVal(const PtrAbstractValue& A,
                              const PtrAbstractValue& B,
                              const NullAbstractInterpretation& ContextB);
-
-    void replaceLoc(AbstractPtrLoc OldLoc, AbstractPtrLoc NewLoc);
 
   public:
     static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
@@ -157,6 +144,14 @@ class NullAbstractInterpretation
      * @return PtrAbstractValue
      */
     PtrAbstractValue getAbstractVal(const llvm::Value* Value) const;
+
+    NullAbstractInterpretation& operator=(
+        const NullAbstractInterpretation& Other);
+    NullAbstractInterpretation(const NullAbstractInterpretation& Other);
+    NullAbstractInterpretation() = default;
+    NullAbstractInterpretation(NullAbstractInterpretation&&) = default;
+    NullAbstractInterpretation& operator=(NullAbstractInterpretation&&) =
+        default;
 };
 
 static_assert(Fact<NullAbstractInterpretation>);

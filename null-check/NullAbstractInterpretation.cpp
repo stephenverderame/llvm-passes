@@ -21,8 +21,7 @@ namespace
  * @param MemState the abstract interpretation facts for the memory
  * @return true if `Value` is definitely null
  */
-bool isNull(const Value* Value, const NullAbstractVals& State,
-            const NullAbstractMem& MemState)
+bool isNull(const Value* Value)
 {
     if (Value ==
         ConstantPointerNull::get(PointerType::get(Value->getType(), 0))) {
@@ -43,29 +42,23 @@ std::string getDebugName(const Value* I)
     // Res = Res.substr(0, Res.find_first_of(" "));
     return Res;
 }
-}  // namespace
 
-/**
- * @brief Simulates mutating a pointer by updating all uses of the old pointer
- * with the new pointer location.
- *
- * @param OldLoc
- * @param NewLoc
- */
-void NullAbstractInterpretation::replaceLoc(AbstractPtrLoc OldLoc,
-                                            AbstractPtrLoc NewLoc)
+bool areAbstractValEq(const PtrAbstractValue& A, const PtrAbstractValue& B)
 {
-    for (auto& [Val, Loc] : State_) {
-        if (Loc == OldLoc) {
-            Loc = NewLoc;
-        }
+    if (A.IsNull != B.IsNull) {
+        return false;
     }
-    for (auto& [Loc, Val] : MemState_) {
-        if (Val.Data.has_value() && Val.Data.value() == OldLoc) {
-            Val.Data = NewLoc;
-        }
+    if (!A.Data && !B.Data) {
+        return true;
     }
+    if (A.Data && B.Data) {
+        const auto& AData = *A.Data;
+        const auto& BData = *B.Data;
+        return areAbstractValEq(AData, BData);
+    }
+    return false;
 }
+}  // namespace
 
 /**
  * @brief Returns a new Abstract Value that is the greatest lower
@@ -87,23 +80,21 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
     auto Result = A;
     Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::MaybeNull;
     if (Result.IsNull == NullState::NonNull) {
-        if (A.Data.has_value() && B.Data.has_value()) {
-            const auto& AData = MemState_.at(*A.Data);
-            const auto& BData = ContextB.MemState_.at(*B.Data);
-            if (!areAbstractValEq(AData, BData, ContextB)) {
+        if (A.Data && B.Data) {
+            const auto& AData = *A.Data;
+            const auto& BData = *B.Data;
+            if (!areAbstractValEq(AData, BData)) {
                 const auto Meet = meetVal(AData, BData, ContextB);
-                const auto Loc = AbstractPtrLoc::nextAvailableLoc();
-                Result.Data = Loc;
-                MemState_[Loc] = Meet;
-                replaceLoc(*A.Data, Loc);
+                *Result.Data = Meet;
             } else {
                 Result.Data = A.Data;
             }
-        } else if (!A.Data.has_value()) {
-            // Memory for B.Data inserted from parent call to
-            // NullAbstractInterpretation::meet
-            Result.Data = B.Data;
         }
+        // else if (!A.Data.has_value()) {
+        //     // Memory for B.Data inserted from parent call to
+        //     // NullAbstractInterpretation::meet
+        //     Result.Data = B.Data;
+        // }
     } else {
         Result.Data = {};
     }
@@ -120,11 +111,9 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
  */
 NullAbstractInterpretation NullAbstractInterpretation::insertIntoRes(
     NullAbstractInterpretation Res, const Value* Value,
-    std::tuple<AbstractPtrLoc, PtrAbstractValue>&& KV)
+    std::shared_ptr<PtrAbstractValue>&& Ptr)
 {
-    Res.State_[Value] = std::get<0>(KV);
-    Res.MemState_[std::get<0>(KV)] = std::get<1>(KV);
-    Res.DebugNames_[Value] = getDebugName(Value);
+    Res.State_[Value] = std::move(Ptr);
     return Res;
 }
 
@@ -142,19 +131,16 @@ TransferRet NullAbstractInterpretation::transferStore(
     auto Value = Store->getValueOperand();
     auto Pointer = Store->getPointerOperand();
     if (Res.State_.contains(Pointer)) {
-        auto& PointerState = Res.MemState_.at(Res.State_.at(Pointer));
+        auto& PointerState = Res.State_.at(Pointer);
         if (Res.State_.contains(Value)) {
             const auto& ValueState = Res.State_.at(Value);
-            PointerState.Data = ValueState;
+            PointerState->Data = ValueState;
         } else if (Value->getType()->isPointerTy()) {
-            const auto [NewId, NewVal] =
-                PtrAbstractValue::make(NullState::MaybeNull);
-            PointerState.Data = NewId;
-            Res.State_[Value] = NewId;
-            Res.MemState_[NewId] = NewVal;
+            const auto NewVal = PtrAbstractValue::make(NullState::MaybeNull);
+            PointerState->Data = NewVal;
             Res.DebugNames_[Value] = getDebugName(Value);
         } else {
-            PointerState.Data = {};
+            assert(PointerState->Data == nullptr);
         }
     }
     return Res;
@@ -163,19 +149,17 @@ TransferRet NullAbstractInterpretation::transferStore(
 TransferRet NullAbstractInterpretation::transferPhi(const PHINode* Phi) const
 {
     auto Res = *this;
-    std::optional<PtrAbstractValue> PhiRes;
+    std::optional<std::shared_ptr<PtrAbstractValue>> PhiRes;
     for (const auto& V : Phi->incoming_values()) {
-        const auto& VState = Res.MemState_.at(Res.State_.at(V));
+        const auto& VState = Res.State_.at(V);
         if (PhiRes.has_value()) {
-            PhiRes = Res.meetVal(PhiRes.value(), VState, Res);
+            *PhiRes.value() = Res.meetVal(*PhiRes.value(), *VState, Res);
         } else {
             PhiRes = VState;
         }
     }
     // assumes that the phi node has at least one incoming value
-    const auto Loc = AbstractPtrLoc::nextAvailableLoc();
-    Res.MemState_[Loc] = PhiRes.value();
-    Res.State_[Phi] = Loc;
+    Res.State_[Phi] = PhiRes.value();
     Res.DebugNames_[Phi] = getDebugName(Phi);
     return Res;
 }
@@ -187,10 +171,9 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
-        const auto [Id, Val] = PtrAbstractValue::make(
-            NonNull ? NullState::NonNull : NullState::MaybeNull);
-        Res.State_[Call] = Id;
-        Res.MemState_[Id] = Val;
+        const auto Val = PtrAbstractValue::make(NonNull ? NullState::NonNull
+                                                        : NullState::MaybeNull);
+        Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
     }
     return Res;
@@ -201,9 +184,9 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
     const auto Pointer = Load->getPointerOperand();
     auto Res = *this;
     if (Res.State_.contains(Pointer)) {
-        const auto& PointerState = Res.MemState_.at(Res.State_.at(Pointer));
-        if (PointerState.Data.has_value()) {
-            Res.State_[Load] = PointerState.Data.value();
+        const auto& PointerState = Res.State_.at(Pointer);
+        if (PointerState->Data) {
+            Res.State_[Load] = PointerState->Data;
             Res.DebugNames_[Load] = getDebugName(Load);
         }
     } else if (Pointer->getType()->isPointerTy()) {
@@ -226,9 +209,9 @@ std::optional<std::tuple<const Value*, const Value*>>
 NullAbstractInterpretation::getNullNonNullPtr(const Value* LHS,
                                               const Value* RHS) const
 {
-    if (isNull(LHS, State_, MemState_)) {
+    if (isNull(LHS)) {
         return std::make_tuple(LHS, RHS);
-    } else if (isNull(RHS, State_, MemState_)) {
+    } else if (isNull(RHS)) {
         return std::make_tuple(RHS, LHS);
     }
     return {};
@@ -259,9 +242,8 @@ NullAbstractInterpretation::pointerCmp(const ICmpInst* Cmp, const Value* LHS,
         const auto [NullPtr, NonNullPtr] = Ptrs.value();
         const auto InsertIntoResults = [NonNullPtr](auto& NullRes,
                                                     auto& NonNullRes) {
-            NullRes.MemState_.at(NullRes.State_.at(NonNullPtr)).nullify();
-            NonNullRes.MemState_.at(NonNullRes.State_.at(NonNullPtr)).IsNull =
-                NullState::NonNull;
+            NullRes.State_.at(NonNullPtr)->nullify();
+            NonNullRes.State_.at(NonNullPtr)->IsNull = NullState::NonNull;
         };
         if (Cmp->getPredicate() == CmpInst::Predicate::ICMP_EQ) {
             InsertIntoResults(TrueRes, FalseRes);
@@ -318,47 +300,22 @@ NullAbstractInterpretation NullAbstractInterpretation::meet(
     const NullAbstractInterpretation& A, const NullAbstractInterpretation& B)
 {
     auto Result = A;
-    for (const auto& Entry : B.State_) {
-        if (auto ExistingEntry = Result.State_.find(Entry.first);
+    std::unordered_map<const PtrAbstractValue*,
+                       std::shared_ptr<PtrAbstractValue>>
+        ClonedVals;
+    for (const auto& [Val, Ptr] : B.State_) {
+        if (auto ExistingEntry = Result.State_.find(Val);
             ExistingEntry != Result.State_.end()) {
-            const auto NewVal =
-                Result.meetVal(Result.MemState_.at(ExistingEntry->second),
-                               B.MemState_.at(Entry.second), B);
-            Result.MemState_[ExistingEntry->second] = NewVal;
+            const auto NewVal = Result.meetVal(*ExistingEntry->second, *Ptr, B);
+            *ExistingEntry->second = NewVal;
         } else {
-            Result.State_.insert(Entry);
-        }
-    }
-    for (const auto& Entry : B.MemState_) {
-        if (auto ExistingEntry = Result.MemState_.find(Entry.first);
-            ExistingEntry != Result.MemState_.end()) {
-            Result.MemState_[Entry.first] =
-                Result.meetVal(ExistingEntry->second, Entry.second, B);
-        } else {
-            Result.MemState_.insert(Entry);
+            Result.State_.emplace(Val, Ptr->clone(ClonedVals));
         }
     }
     for (const auto& [Val, Name] : B.DebugNames_) {
         Result.DebugNames_[Val] = Name;
     }
     return Result;
-}
-bool NullAbstractInterpretation::areAbstractValEq(
-    const PtrAbstractValue& A, const PtrAbstractValue& B,
-    const NullAbstractInterpretation& BContext) const
-{
-    if (A.IsNull != B.IsNull) {
-        return false;
-    }
-    if (!A.Data.has_value() && !B.Data.has_value()) {
-        return true;
-    }
-    if (A.Data.has_value() && B.Data.has_value()) {
-        const auto& AData = MemState_.at(A.Data.value());
-        const auto& BData = BContext.MemState_.at(B.Data.value());
-        return areAbstractValEq(AData, BData, BContext);
-    }
-    return false;
 }
 
 bool NullAbstractInterpretation::operator==(
@@ -367,11 +324,10 @@ bool NullAbstractInterpretation::operator==(
     if (State_.size() != Other.State_.size()) {
         return false;
     }
-    for (const auto& [Val, PtrLoc] : State_) {
+    for (const auto& [Val, Ptr] : State_) {
         if (const auto OtherIt = Other.State_.find(Val);
             OtherIt != Other.State_.end()) {
-            if (!areAbstractValEq(MemState_.at(PtrLoc),
-                                  Other.MemState_.at(OtherIt->second), Other)) {
+            if (!areAbstractValEq(*Ptr, *OtherIt->second)) {
                 return false;
             }
         } else {
@@ -379,10 +335,9 @@ bool NullAbstractInterpretation::operator==(
         }
     }
 
-    for (const auto& [OtherVal, OtherPtrLoc] : Other.State_) {
+    for (const auto& [OtherVal, OtherPtr] : Other.State_) {
         if (const auto It = State_.find(OtherVal); It != Other.State_.end()) {
-            if (!areAbstractValEq(MemState_.at(It->second),
-                                  Other.MemState_.at(OtherPtrLoc), Other)) {
+            if (!areAbstractValEq(*It->second, *OtherPtr)) {
                 return false;
             }
         } else {
@@ -397,7 +352,46 @@ PtrAbstractValue NullAbstractInterpretation::getAbstractVal(
     const Value* Val) const
 {
     if (const auto It = State_.find(Val); It != State_.end()) {
-        return MemState_.at(It->second);
+        return *It->second;
     }
     return PtrAbstractValue{NullState::MaybeNull};
+}
+
+std::shared_ptr<PtrAbstractValue> PtrAbstractValue::clone(
+    std::unordered_map<const PtrAbstractValue*,
+                       std::shared_ptr<PtrAbstractValue>>& ClonedVals) const
+{
+    if (ClonedVals.contains(this)) {
+        return ClonedVals.at(this);
+    }
+    auto Result = std::make_shared<PtrAbstractValue>(*this);
+    if (Data && ClonedVals.contains(Data.get())) {
+        Result->Data = ClonedVals.at(Data.get());
+    } else if (Data) {
+        Result->Data = Data->clone(ClonedVals);
+        ClonedVals.emplace(Data.get(), Result->Data);
+    }
+    ClonedVals.emplace(this, Result);
+    return Result;
+}
+
+NullAbstractInterpretation::NullAbstractInterpretation(
+    const NullAbstractInterpretation& Other)
+    : State_(Other.State_.size()), DebugNames_(Other.DebugNames_)
+{
+    std::unordered_map<const PtrAbstractValue*,
+                       std::shared_ptr<PtrAbstractValue>>
+        ClonedVals;
+    for (const auto& [Val, Ptr] : Other.State_) {
+        State_.emplace(Val, Ptr->clone(ClonedVals));
+    }
+}
+
+NullAbstractInterpretation& NullAbstractInterpretation::operator=(
+    const NullAbstractInterpretation& Other)
+{
+    auto Temp = Other;
+    std::swap(State_, Temp.State_);
+    std::swap(DebugNames_, Temp.DebugNames_);
+    return *this;
 }
