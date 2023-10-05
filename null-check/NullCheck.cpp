@@ -1,6 +1,12 @@
+#include <llvm-17/llvm/Analysis/CGSCCPassManager.h>
+#include <llvm-17/llvm/Analysis/LazyValueInfo.h>
+#include <llvm-17/llvm/Analysis/ScalarEvolution.h>
 #include <llvm-17/llvm/IR/IRBuilder.h>
 #include <llvm-17/llvm/IR/Instruction.h>
+#include <llvm-17/llvm/IR/PassManager.h>
+#include <llvm-17/llvm/Pass.h>
 #include <llvm-17/llvm/Support/raw_ostream.h>
+#include <llvm/Analysis/LazyValueInfo.h>
 #include <llvm/Pass.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
@@ -121,23 +127,22 @@ auto displayDebugInfo(const Instruction& Inst)
                 const auto Ptr = Load->getPointerOperand();
                 Violation |=
                     checkPtrOpSafety(AnalysisResult, Ptr, I, PtrUseType::Load);
-            } else if (auto GEP = dyn_cast<GetElementPtrInst>(&I);
-                       GEP != nullptr) {
-                const auto Ptr = GEP->getPointerOperand();
-                Violation |=
-                    checkPtrOpSafety(AnalysisResult, Ptr, I, PtrUseType::GEP);
             }
         }
     }
     return Violation;
 }
 struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
-    PreservedAnalyses run(Module& M, ModuleAnalysisManager& /* AM */)
+    PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
     {
+        FunctionAnalysisManager& FAM =
+            AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
         auto Violation = false;
         for (auto& F : M) {
+            auto& LVA = FAM.getResult<LazyValueAnalysis>(F);
+            const auto IAResults = analyze(F, IntervalAnalysis());
             const auto AnalysisResult =
-                analyze(F, NullAbstractInterpretation{});
+                analyze(F, NullAbstractInterpretation(LVA, IAResults, M));
             Violation |= checkInstSafety(F, AnalysisResult);
         }
         if (Violation) {
@@ -156,9 +161,9 @@ llvmGetPassPluginInfo()
             .PluginName = "NullCheckPass",
             .PluginVersion = "v0.1",
             .RegisterPassBuilderCallbacks = [](PassBuilder& PB) {
-                PB.registerPipelineStartEPCallback(
-                    [](ModulePassManager& MPM, OptimizationLevel /* Level */) {
-                        MPM.addPass(NullCheckPass{});
+                PB.registerOptimizerEarlyEPCallback(
+                    [](ModulePassManager& PM, OptimizationLevel /* Level */) {
+                        PM.addPass(NullCheckPass{});
                     });
             }};
 }

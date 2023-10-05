@@ -4,4 +4,5 @@ add_llvm_pass_plugin(NullCheck
     # List your source files here.
     NullCheck.cpp
     NullAbstractInterpretation.cpp
+    IntervalAnalysis.cpp
 )

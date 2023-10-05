@@ -1,9 +1,15 @@
 #pragma once
 
+#include <llvm-17/llvm/Analysis/LazyValueInfo.h>
+#include <llvm-17/llvm/Analysis/ScalarEvolution.h>
+#include <llvm-17/llvm/IR/DataLayout.h>
+#include <llvm-17/llvm/IR/Instruction.h>
+
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
+#include "IntervalAnalysis.hpp"
 #include "df/DataFlow.hpp"
 
 /**
@@ -31,20 +37,39 @@ using NullAbstractVals =
 struct PtrAbstractValue {
     /// If the value is known to be null.
     NullState IsNull = NullState::MaybeNull;
-    /// The value of the data referred to be the pointer, may be null.
+    /// The size of the data referred to by the pointer.
+    LatticeElem<uint64_t> Size;
+    /// The value of the data referred ;to be the pointer, may be null.
     std::shared_ptr<PtrAbstractValue> Data = nullptr;
 
     /// @brief Constructs a TOP abstract value
     PtrAbstractValue() = default;
     explicit PtrAbstractValue(NullState K) : IsNull(K), Data() {}
+    explicit PtrAbstractValue(NullState K, LatticeElem<uint64_t> Size)
+        : IsNull(K), Size(Size), Data()
+    {
+    }
 
     /**
      * @brief Constructs a new abstract location and abstract value which has
-     * the given NullState and no data (not a pointer to a pointer).
+     * the given NullState, known size of data, and no data (not a pointer to a
+     * pointer).
+     */
+    static auto make(NullState N, uint64_t Size)
+    {
+        return std::make_shared<PtrAbstractValue>(N,
+                                                  LatticeElem<uint64_t>(Size));
+    }
+
+    /**
+     * @brief Constructs a new abstract location and abstract value which has
+     * the given NullState, an unknown size of data, and no data (not a pointer
+     * to a pointer).
      */
     static auto make(NullState N)
     {
-        return std::make_shared<PtrAbstractValue>(N);
+        return std::make_shared<PtrAbstractValue>(
+            N, LatticeElem<uint64_t>::makeBottom());
     }
 
     /**
@@ -84,6 +109,7 @@ class CallInst;
 class PHINode;
 class BranchInst;
 class ICmpInst;
+class GetElementPtrInst;
 }  // namespace llvm
 
 /**
@@ -114,6 +140,12 @@ class NullAbstractInterpretation
     /// Mapping from values to their names (ie. "%0") for debugging
     std::unordered_map<const llvm::Value*, std::string> DebugNames_;
 
+    std::reference_wrapper<llvm::LazyValueInfo> LVA_;
+    std::reference_wrapper<const DataFlowFacts<IntervalAnalysis>>
+        IntervalFacts_;
+
+    std::shared_ptr<llvm::DataLayout> DL_;
+
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
     TransferRet transferLoad(const llvm::LoadInst* Load) const;
     TransferRet transferStore(const llvm::StoreInst* Store) const;
@@ -122,9 +154,7 @@ class NullAbstractInterpretation
     TransferRet transferBranch(
         const llvm::BranchInst* Branch,
         const DataFlowFacts<NullAbstractInterpretation>& Facts) const;
-    std::tuple<NullAbstractInterpretation, NullAbstractInterpretation>
-    backpropCond(const llvm::Value* Cond,
-                 const DataFlowFacts<NullAbstractInterpretation>& Facts) const;
+    TransferRet transferGetElemPtr(const llvm::GetElementPtrInst* GEP) const;
     static NullAbstractInterpretation insertIntoRes(
         NullAbstractInterpretation Res, const llvm::Value* Value,
         std::shared_ptr<PtrAbstractValue>&& Ptr);
@@ -139,6 +169,8 @@ class NullAbstractInterpretation
     PtrAbstractValue meetVal(const PtrAbstractValue& A,
                              const PtrAbstractValue& B,
                              const NullAbstractInterpretation& ContextB);
+    bool inRange(const llvm::Use& Val, const llvm::Instruction* Inst,
+                 uint64_t Size) const;
 
   public:
     /// @see Fact::meet
@@ -166,10 +198,19 @@ class NullAbstractInterpretation
     NullAbstractInterpretation& operator=(
         const NullAbstractInterpretation& Other);
     NullAbstractInterpretation(const NullAbstractInterpretation& Other);
-    NullAbstractInterpretation() = default;
+    NullAbstractInterpretation(
+        llvm::LazyValueInfo& LVA,
+        const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
+        const llvm::Module& M)
+        : State_(),
+          DebugNames_(),
+          LVA_(LVA),
+          DL_(std::make_shared<llvm::DataLayout>(&M)),
+          IntervalFacts_(IntervalFacts){};
     NullAbstractInterpretation(NullAbstractInterpretation&&) = default;
     NullAbstractInterpretation& operator=(NullAbstractInterpretation&&) =
         default;
+    ~NullAbstractInterpretation() = default;
 };
 
 static_assert(Fact<NullAbstractInterpretation>);

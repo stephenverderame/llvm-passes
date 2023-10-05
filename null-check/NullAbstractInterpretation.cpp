@@ -1,12 +1,16 @@
 #include "NullAbstractInterpretation.hpp"
 
+#include <llvm-17/llvm/IR/ConstantRange.h>
 #include <llvm-17/llvm/IR/Constants.h>
 #include <llvm-17/llvm/IR/DerivedTypes.h>
 #include <llvm-17/llvm/IR/Instructions.h>
 #include <llvm-17/llvm/Support/Casting.h>
+#include <llvm/Analysis/LazyValueInfo.h>
 
 #include <cstddef>
 #include <optional>
+
+#include "df/DataFlow.hpp"
 
 // NOLINTNEXTLINE
 using namespace llvm;
@@ -23,36 +27,13 @@ namespace
  */
 bool isNull(const Value* Value)
 {
-    if (Value ==
-        ConstantPointerNull::get(PointerType::get(Value->getType(), 0))) {
-        return true;
-    }
-    return false;
+    return Value ==
+           ConstantPointerNull::get(PointerType::get(Value->getType(), 0));
 }
 
-std::string getDebugName(const Value* I)
+const auto getSizeInBytes(Type* Ty, const DataLayout* DL)
 {
-    if (I->hasName()) {
-        return I->getName().str();
-    }
-    std::string Res;
-    raw_string_ostream Stream(Res);
-    I->print(Stream, false);
-    Res = Res.substr(Res.find_first_not_of(" "));
-    // Res = Res.substr(0, Res.find_first_of(" "));
-    return Res;
-}
-
-decltype(auto) getNonConstRes(
-    const BasicBlock* CurBlock,
-    const TransferRetType<NullAbstractInterpretation>& OutFact)
-{
-    if (std::holds_alternative<NullAbstractInterpretation>(OutFact)) {
-        return std::get<NullAbstractInterpretation>(OutFact);
-    } else {
-        const auto& OutMap = std::get<0>(OutFact);
-        return OutMap.at(CurBlock);
-    }
+    return DL->getTypeStoreSize(Ty);
 }
 
 }  // namespace
@@ -92,6 +73,8 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
 {
     auto Result = A;
     Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::MaybeNull;
+    Result.Size = LatticeElem<uint64_t>::meet(
+        A.Size, B.Size, [](auto A, auto B) { return std::min(A, B); });
     if (Result.IsNull == NullState::NonNull) {
         if (A.Data && B.Data) {
             const auto& AData = *A.Data;
@@ -135,8 +118,11 @@ using TransferRet = NullAbstractInterpretation::TransferRet;
 TransferRet NullAbstractInterpretation::transferAlloca(
     const AllocaInst* Alloca) const
 {
+    const auto Size = Alloca->getAllocatedType()->isArrayTy()
+                          ? Alloca->getAllocatedType()->getArrayNumElements()
+                          : 1;
     return NullAbstractInterpretation::insertIntoRes(
-        *this, Alloca, PtrAbstractValue::make(NullState::NonNull));
+        *this, Alloca, PtrAbstractValue::make(NullState::NonNull, Size));
 }
 TransferRet NullAbstractInterpretation::transferStore(
     const StoreInst* Store) const
@@ -217,6 +203,69 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
 }
 
 /**
+ * @brief Determines if all possible values of the given value is in range of
+ * `0` to `Size`.
+ *
+ * @param Val the value to check
+ * @param Inst the instruction that uses the value
+ * @param Size the size to check against
+ * @return true if all possible values of the given value is in range of `0` to
+ * `Size`
+ */
+bool NullAbstractInterpretation::inRange(const Use& Val,
+                                         const llvm::Instruction* Inst,
+                                         uint64_t Size) const
+{
+    const auto Range = LVA_.get().getConstantRangeAtUse(Val);
+    const auto L = Range.getLower();
+    const auto U = Range.getUpper();
+    if (Range.getLower().isNegative() || !Range.getUnsignedMax().ult(Size)) {
+        const auto Interval =
+            IntervalFacts_.get().InstructionInFacts.at(Inst).getValRange(Val);
+        if (Interval.has_value()) {
+            const auto IntVal = Interval.value();
+            return !(IntVal.Lower < bigint{0} ||
+                     IntVal.Upper > bigint(std::to_string(Size)));
+        }
+        return false;
+    } else {
+        return true;
+    }
+}
+
+TransferRet NullAbstractInterpretation::transferGetElemPtr(
+    const GetElementPtrInst* GEP) const
+{
+    auto Res = *this;
+    Res.DebugNames_[GEP] = getDebugName(GEP);
+    const auto BasePtr = GEP->getPointerOperand();
+    bool Bottom = false;
+    if (auto It = Res.State_.find(BasePtr); It != Res.State_.end()) {
+        const auto& BaseAbstractVal = *It->second;
+        if (BaseAbstractVal.Size.hasValue()) {
+            for (const auto& Idx : GEP->indices()) {
+                if (!inRange(Idx, GEP, BaseAbstractVal.Size.value())) {
+                    Bottom = true;
+                    break;
+                }
+            }
+        } else {
+            Bottom = true;
+        }
+    } else {
+        Bottom = true;
+    }
+    if (!Bottom) {
+        const auto DataPtr = Res.State_.at(BasePtr)->Data;
+        Res.State_[GEP] =
+            DataPtr ? DataPtr : PtrAbstractValue::make(NullState::NonNull);
+        Res.State_[GEP]->IsNull = NullState::NonNull;
+        Res.DebugNames_[GEP] = getDebugName(GEP);
+    }
+    return Res;
+}
+
+/**
  * @brief Determines which of the two pointers is null and which is non null
  *
  * @param LHS pointer A
@@ -274,77 +323,25 @@ NullAbstractInterpretation::pointerCmp(const ICmpInst* Cmp, const Value* LHS,
     return {TrueRes, FalseRes};
 }
 
-/**
- * @brief Gets the abstract interpretation facts for the true branch and the
- * false branch, respectively, of a condition. If `Cond` is true, the true
- * facts may be assumed, and if `Cond` is false, the false facts may be
- * assumed.
- *
- * @param Cond the condition
- * @return Tuple of (true facts, false facts)
- */
-std::tuple<NullAbstractInterpretation, NullAbstractInterpretation>
-NullAbstractInterpretation::backpropCond(
-    const llvm::Value* Cond,
-    const DataFlowFacts<NullAbstractInterpretation>& Facts) const
-{
-    if (const auto Cmp = dyn_cast<ICmpInst>(Cond); Cmp != nullptr) {
-        const auto LHS = Cmp->getOperand(0);
-        const auto RHS = Cmp->getOperand(1);
-        if (LHS->getType()->isPointerTy() && RHS->getType()->isPointerTy()) {
-            return pointerCmp(Cmp, LHS, RHS);
-        }
-    } else if (const auto Phi = dyn_cast<PHINode>(Cond); Phi != nullptr) {
-        if (Phi->getNumIncomingValues() != 2 ||
-            !Phi->getType()->isIntegerTy(1)) {
-            return std::make_tuple(*this, *this);
-        }
-        const llvm::Value* NonConstUse = nullptr;
-        const BasicBlock* NonConstBlock = nullptr;
-        std::optional<bool> Const;
-        for (auto i = 0u; i < Phi->getNumIncomingValues(); ++i) {
-            const auto V = Phi->getIncomingValue(i);
-            const auto B = Phi->getIncomingBlock(i);
-            if (const auto Int = dyn_cast<ConstantInt>(V); Int != nullptr) {
-                Const = Int->getValue().getBoolValue();
-            } else {
-                NonConstUse = V;
-                NonConstBlock = B;
-            }
-        }
-        if (Const.has_value() && NonConstUse) {
-            // phi node of [false, ] and [other,]
-            // so if the true branch is taken, we can assume the `other` value
-            // is true
-            // OR
-            // phi node of [true, ] and [other,]
-            // so if the false branch is taken, we can assume the `other` value
-            // is false
-            const auto [TrueRes, FalseRes] =
-                getNonConstRes(Phi->getParent(),
-                               Facts.BlockOutFacts.at(NonConstBlock))
-                    .backpropCond(NonConstUse, Facts);
-            return Const.value() ? std::make_tuple(*this, FalseRes)
-                                 : std::make_tuple(TrueRes, *this);
-        }
-    }
-    return std::make_tuple(*this, *this);
-}
-
 TransferRet NullAbstractInterpretation::transferBranch(
     const BranchInst* Branch,
     const DataFlowFacts<NullAbstractInterpretation>& Facts) const
 {
-    if (!Branch->isConditional()) {
-        return *this;
-    }
-    const auto Cond = Branch->getCondition();
-    const auto [TrueRes, FalseRes] = backpropCond(Cond, Facts);
-    auto Ret = std::map<const BasicBlock*, NullAbstractInterpretation>{};
-    Ret[Branch->getSuccessor(0)] = TrueRes;
-    Ret[Branch->getSuccessor(1)] = FalseRes;
-    assert(Branch->getNumSuccessors() == 2);
-    return Ret;
+    return transferConditionDependentBranch(
+        *this, Branch, Facts,
+        [](const auto& Self, const auto* Cond, const auto& /* Facts */)
+            -> std::optional<std::tuple<NullAbstractInterpretation,
+                                        NullAbstractInterpretation>> {
+            if (const auto Cmp = dyn_cast<ICmpInst>(Cond); Cmp != nullptr) {
+                const auto LHS = Cmp->getOperand(0);
+                const auto RHS = Cmp->getOperand(1);
+                if (LHS->getType()->isPointerTy() &&
+                    RHS->getType()->isPointerTy()) {
+                    return Self.pointerCmp(Cmp, LHS, RHS);
+                }
+            }
+            return {};
+        });
 }
 
 TransferRet NullAbstractInterpretation::transfer(
@@ -363,6 +360,11 @@ TransferRet NullAbstractInterpretation::transfer(
         return transferLoad(Load);
     } else if (auto Branch = dyn_cast<BranchInst>(&Inst); Branch != nullptr) {
         return transferBranch(Branch, Facts);
+    } else if (auto GEP = dyn_cast<GetElementPtrInst>(&Inst); GEP != nullptr) {
+        return transferGetElemPtr(GEP);
+    } else if (Inst.getType()->isPointerTy()) {
+        return insertIntoRes(*this, &Inst,
+                             PtrAbstractValue::make(NullState::MaybeNull));
     }
     return {*this};
 }
@@ -448,7 +450,11 @@ std::shared_ptr<PtrAbstractValue> PtrAbstractValue::clone(
 
 NullAbstractInterpretation::NullAbstractInterpretation(
     const NullAbstractInterpretation& Other)
-    : State_(Other.State_.size()), DebugNames_(Other.DebugNames_)
+    : State_(Other.State_.size()),
+      DebugNames_(Other.DebugNames_),
+      LVA_(Other.LVA_),
+      DL_(Other.DL_),
+      IntervalFacts_(Other.IntervalFacts_)
 {
     std::unordered_map<const PtrAbstractValue*,
                        std::shared_ptr<PtrAbstractValue>>

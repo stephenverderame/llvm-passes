@@ -77,7 +77,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/null-check/passes/And.cc",
+                "./test/null-check/passes/SimpleRange.cc",
             ],
             "cwd": "${workspaceFolder}"
         }
