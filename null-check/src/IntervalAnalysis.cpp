@@ -243,10 +243,15 @@ void overwriteAndCheckMonotonicity(
     if (OldVal->hasValue() && NewVal->hasValue()) {
         auto& Range = OldVal->value();
         auto& NewRange = NewVal->value();
-        if ((Range.Monotonicity.isTop() ||
-             Range.Monotonicity.hasValue() &&
-                 Range.Monotonicity.value() == Monotonic::Increasing) &&
-            NewRange.Lower >= Range.Lower && NewRange.Upper >= Range.Upper) {
+        if (Range.Monotonicity.isTop() && NewRange.Monotonicity.isTop() &&
+            NewRange == Range) {
+            *OldVal = *NewVal;
+            return;
+        } else if ((Range.Monotonicity.isTop() ||
+                    Range.Monotonicity.hasValue() &&
+                        Range.Monotonicity.value() == Monotonic::Increasing) &&
+                   NewRange.Lower >= Range.Lower &&
+                   NewRange.Upper >= Range.Upper) {
             NewRange.Monotonicity =
                 LatticeElem<Monotonic>(Monotonic::Increasing);
         } else if ((Range.Monotonicity.isTop() ||

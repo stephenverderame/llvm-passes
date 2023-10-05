@@ -8,7 +8,10 @@ namespace
 {
 bigint toUnsigned(const bigint& A, unsigned int BitWidth)
 {
-    if (A < bigint{0}) {
+    // It would be better to have special inf and -inf values
+    if (A <= SmallEnough) {
+        return bigint{0};
+    } else if (A < bigint{0}) {
         return A + bigint::_big_pow(bigint(2), bigint(BitWidth));
     }
     return A;
@@ -16,7 +19,9 @@ bigint toUnsigned(const bigint& A, unsigned int BitWidth)
 
 bigint toSigned(const bigint& A, unsigned int BitWidth)
 {
-    if (A >= bigint::_big_pow(bigint(2), bigint(BitWidth - 1))) {
+    if (A >= BigEnough) {
+        return A;
+    } else if (A >= bigint::_big_pow(bigint(2), bigint(BitWidth - 1))) {
         return A - bigint::_big_pow(bigint(2), bigint(BitWidth));
     }
     return A;
