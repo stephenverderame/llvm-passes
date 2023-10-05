@@ -1,11 +1,8 @@
 #pragma once
 #include <llvm-17/llvm/IR/Instructions.h>
 
-#include <unordered_map>
-
-#include "df/DataFlow.hpp"
+#include "df/LatticeElem.hpp"
 #include "external/bigint.h"
-
 /**
  * @brief Whether a range is monotonic increasing or decreasing.
  */
@@ -79,78 +76,29 @@ IntRange operator-(const IntRange& A, const IntRange& B);
 IntRange operator/(const IntRange& A, const IntRange& B);
 IntRange operator<<(const IntRange& A, const IntRange& B);
 
-namespace llvm
-{
-class AllocaInst;
-class BinaryOperator;
-class UnaryOperator;
-class PHINode;
-}  // namespace llvm
+/**
+ * @brief Returns the stricter (smaller distance between upper and lower bounds)
+ * of the two ranges. If there is a tie, the first argument is returned.
+ *
+ * @param A
+ * @param B
+ * @return IntRange
+ */
+IntRange smallerRange(const IntRange& A, const IntRange& B);
 
 /**
- * @brief Like conditional constant propagation, but with ranges.
- * TOP: set of all values having unknown ranges (empty set)
- * BOTTOM: set of all values having infinite ranges
+ * @brief Returns a new lattice element that can be assumed when
+ * `LHS Cond RHS` is true. The returned lattice element will be with
+ * respect to the `LHS` argument, that is if `RHS` does not have a value,
+ * the returned lattice element will be `LHS`.
  *
+ * @param LHS the lattice element for the left hand side of the comparison
+ * @param RHS the lattice element for the right hand side of the comparison
+ * @param BitWidth the bit width of the operands
+ * @param Cond the condition of the comparison
+ * @return LatticeElem<IntRange>
  */
-class IntervalAnalysis
-{
-  public:
-    using TransferRet = TransferRetType<IntervalAnalysis>;
-    using SingleFact = LatticeElem<IntRange>;
-
-  private:
-    /**
-     * @brief Mapping from syntactic values to their ranges.
-     * If the range is unbounded, this is represented as an empty optional.
-     */
-    std::unordered_map<const llvm::Value*, std::shared_ptr<SingleFact>> Ranges_;
-
-    mutable std::unordered_map<const llvm::Value*, std::string> DebugNames_;
-
-    TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
-    TransferRet transferBinOp(const llvm::BinaryOperator* BinOp) const;
-    TransferRet transferCast(const llvm::CastInst* Cast) const;
-    TransferRet transferBranch(const llvm::BranchInst* Branch,
-                               const DataFlowFacts<IntervalAnalysis>&) const;
-    TransferRet transferPhi(const llvm::PHINode* Phi) const;
-    TransferRet transferLoad(const llvm::LoadInst* Load) const;
-    TransferRet transferStore(const llvm::StoreInst* Store) const;
-    std::tuple<IntervalAnalysis, IntervalAnalysis> transferCmp(
-        const llvm::ICmpInst* Cmp) const;
-
-    std::shared_ptr<SingleFact> getRange(const llvm::Value* V);
-
-  public:
-    /// @see Fact::meet
-    static IntervalAnalysis meet(const IntervalAnalysis& A,
-                                 const IntervalAnalysis& B);
-
-    /// @see Fact::transfer
-    TransferRetType<IntervalAnalysis> transfer(
-        const llvm::Instruction& I,
-        const DataFlowFacts<IntervalAnalysis>& Facts) const;
-
-    using Dir = Forwards;
-
-    bool operator==(const IntervalAnalysis& Other) const;
-
-    IntervalAnalysis& operator=(const IntervalAnalysis& Other);
-    IntervalAnalysis(const IntervalAnalysis& Other);
-    IntervalAnalysis() = default;
-    IntervalAnalysis(IntervalAnalysis&&) = default;
-    IntervalAnalysis& operator=(IntervalAnalysis&&) = default;
-    ~IntervalAnalysis() = default;
-
-    /**
-     * @brief Gets a conservative bound for the values that a given value can
-     * take during runtime.
-     *
-     * @param V The value to get the range for.
-     * @return an integer range if the value is known to be bounded, or an empty
-     * optional if the value is unbounded/unknown.
-     */
-    std::optional<IntRange> getValRange(const llvm::Value* V) const;
-};
-
-static_assert(Fact<IntervalAnalysis>);
+LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
+                                         const LatticeElem<IntRange>& RHS,
+                                         uint64_t BitWidth,
+                                         llvm::ICmpInst::Predicate Cond);

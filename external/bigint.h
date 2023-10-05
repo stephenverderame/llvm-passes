@@ -36,27 +36,6 @@
 #include <string>
 #include <vector>
 
-// Macros for Programmer(User) use cases.
-
-#define big_abs bigint::_big_abs
-#define big_max bigint::_big_max
-#define big_min bigint::_big_min
-#define big_pow bigint::_big_pow
-#define big_sqrt bigint::_big_sqrt
-#define big_log2 bigint::_big_log2
-#define big_log10 bigint::_big_log10
-#define big_logwithbase bigint::_big_logwithbase
-#define big_antilog2 bigint::_big_antilog2
-#define big_antilog10 bigint::_big_antilog10
-#define big_swap bigint::_big_swap
-#define big_reverse bigint::_big_reverse
-#define big_gcd bigint::_big_gcd
-#define big_lcm bigint::_big_lcm
-#define big_fact bigint::_big_fact
-#define big_isPrime bigint::_big_isPrime
-#define big_isPalindrome bigint::_big_isPalindrome
-#define to_bigint bigint::_to_bigint
-
 // Big Integer Class
 
 class bigint
@@ -117,6 +96,9 @@ class bigint
     explicit bigint(long long int n) { str = std::to_string(n); }
     explicit bigint(int n) { str = std::to_string(n); }
     explicit bigint(long int n) { str = std::to_string(n); }
+    explicit bigint(unsigned n) { str = std::to_string(n); }
+    explicit bigint(unsigned long n) { str = std::to_string(n); }
+    explicit bigint(unsigned long long n) { str = std::to_string(n); }
     bigint(const bigint& n) { str = n.str; }
     bigint(bigint&&) = default;
     bigint& operator=(const bigint& n) = default;
