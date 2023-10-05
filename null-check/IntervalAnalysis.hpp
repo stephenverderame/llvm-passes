@@ -6,8 +6,13 @@
 #include "df/DataFlow.hpp"
 #include "external/bigint.h"
 
+enum class Monotonic {
+    Increasing,
+    Decreasing,
+};
+
 /**
- * @brief An integral range. We use bigints for arbitrary precision
+ * @brief An inclusive integral range. We use bigints for arbitrary precision
  * since LLVM has arbitrary precision integers, and to prevent worrying
  * about overflow cases with things like signed and unsigned integers.
  *
@@ -19,6 +24,7 @@
 struct IntRange {
     bigint Lower;
     bigint Upper;
+    LatticeElem<Monotonic> Monotonicity;
 
     /**
      * Computes the greatest lower bound of two ranges.
@@ -53,6 +59,12 @@ struct IntRange {
     {
         return remainder(Other, false);
     }
+
+    /// Returns true if the entire range is non-negative.
+    inline bool isNonNegative() const { return Lower >= bigint(0); }
+    inline bool isPositive() const { return Lower > bigint(0); }
+    inline bool isNegative() const { return Upper < bigint(0); }
+    inline bool isNonPositive() const { return Upper <= bigint(0); }
 };
 
 IntRange operator*(const IntRange& A, const IntRange& B);

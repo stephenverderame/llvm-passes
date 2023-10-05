@@ -309,7 +309,12 @@ class LatticeElem
         } else if (B.isTop()) {
             return A;
         }
-        return LatticeElem(M(A.value(), B.value()));
+        if constexpr (std::is_convertible_v<decltype(M(A.value(), B.value())),
+                                            LatticeElem>) {
+            return M(A, B);
+        } else {
+            return LatticeElem(M(A.value(), B.value()));
+        }
     }
 
     /**
@@ -338,7 +343,12 @@ class LatticeElem
         } else if (B.isBottom()) {
             return A;
         }
-        return LatticeElem(M(A.value(), B.value()));
+        if constexpr (std::is_convertible_v<decltype(M(A.value(), B.value())),
+                                            LatticeElem>) {
+            return M(A, B);
+        } else {
+            return LatticeElem(M(A.value(), B.value()));
+        }
     }
 
     /**
@@ -357,6 +367,20 @@ class LatticeElem
             return *this;
         }
         return LatticeElem(Func(Fact_.value()));
+    }
+
+    /**
+     * @brief Returns an optional which contains a fact if
+     * the lattice element is inhabited (not top or bottom)
+     *
+     * @return std::optional<T>
+     */
+    std::optional<T> intoOptional() const
+    {
+        if (isBottom() || isTop()) {
+            return std::nullopt;
+        }
+        return Fact_;
     }
 };
 
