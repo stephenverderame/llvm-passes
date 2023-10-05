@@ -6,7 +6,10 @@
 #include "df/DataFlow.hpp"
 #include "external/bigint.h"
 
-enum class Monotonic {
+/**
+ * @brief Whether a range is monotonic increasing or decreasing.
+ */
+enum class Monotonic : uint8_t {
     Increasing,
     Decreasing,
 };
@@ -62,8 +65,11 @@ struct IntRange {
 
     /// Returns true if the entire range is non-negative.
     inline bool isNonNegative() const { return Lower >= bigint(0); }
+    /// Returns true if the entire range is positive.
     inline bool isPositive() const { return Lower > bigint(0); }
+    /// Returns true if the entire range is negative.
     inline bool isNegative() const { return Upper < bigint(0); }
+    /// Returns true if the entire range is non-positive.
     inline bool isNonPositive() const { return Upper <= bigint(0); }
 };
 

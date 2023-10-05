@@ -560,6 +560,40 @@ TransferRet IntervalAnalysis::transferLoad(const LoadInst* Load) const
     return Res;
 }
 
+/**
+ * @brief Updates the value of `OldVal` with `NewVal` for a store. If the new
+ * value is monotonically greater than the old value, and the old value was
+ * monotonically increasing or top, the new value is monotonically increasing.
+ * Likewise for decreasing.
+ *
+ * @param OldVal the old value
+ * @param NewVal the new value
+ */
+void overwriteAndCheckMonotonicity(
+    std::shared_ptr<LatticeElem<IntRange>>& OldVal,
+    const std::shared_ptr<LatticeElem<IntRange>>& NewVal)
+{
+    if (OldVal->hasValue() && NewVal->hasValue()) {
+        auto& Range = OldVal->value();
+        auto& NewRange = NewVal->value();
+        if ((Range.Monotonicity.isTop() ||
+             Range.Monotonicity.hasValue() &&
+                 Range.Monotonicity.value() == Monotonic::Increasing) &&
+            NewRange.Lower >= Range.Lower && NewRange.Upper >= Range.Upper) {
+            NewRange.Monotonicity =
+                LatticeElem<Monotonic>(Monotonic::Increasing);
+        } else if ((Range.Monotonicity.isTop() ||
+                    Range.Monotonicity.hasValue() &&
+                        Range.Monotonicity.value() == Monotonic::Decreasing) &&
+                   NewRange.Lower <= Range.Lower &&
+                   NewRange.Upper <= Range.Upper) {
+            NewRange.Monotonicity =
+                LatticeElem<Monotonic>(Monotonic::Decreasing);
+        }
+    }
+    *OldVal = *NewVal;
+}
+
 TransferRet IntervalAnalysis::transferStore(const StoreInst* Store) const
 {
     auto Res = *this;
@@ -567,7 +601,7 @@ TransferRet IntervalAnalysis::transferStore(const StoreInst* Store) const
     const auto Val = Store->getValueOperand();
     const auto ValRange = Res.getRange(Val);
     if (Res.Ranges_.contains(Ptr)) {
-        *Res.Ranges_[Ptr] = *ValRange;
+        overwriteAndCheckMonotonicity(Res.Ranges_[Ptr], ValRange);
     } else {
         Res.Ranges_[Ptr] = ValRange;
     }
