@@ -1,8 +1,10 @@
 #pragma once
 #include <llvm-17/llvm/IR/Instructions.h>
 
+#include <optional>
+
+#include "Bound.hpp"
 #include "df/LatticeElem.hpp"
-#include "external/bigint.h"
 /**
  * @brief Whether a range is monotonic increasing or decreasing.
  */
@@ -22,8 +24,10 @@ enum class Monotonic : uint8_t {
  *
  */
 struct IntRange {
-    bigint Lower;
-    bigint Upper;
+    /// The lower bound or empty optional for -inf
+    bound::Bound Lower;
+    /// The upper bound or empty optional for +inf
+    bound::Bound Upper;
     LatticeElem<Monotonic> Monotonicity;
 
     /**
@@ -39,7 +43,10 @@ struct IntRange {
 
     /// @brief Create a range from a single integer.
     explicit IntRange(bigint&& I) : Lower(I), Upper(std::move(I)) {}
-    IntRange() = default;
+    IntRange()
+        : Lower(bound::Bound::makeNegInf()),
+          Upper(bound::Bound::makePosInf()),
+          Monotonicity(){};
     IntRange(bigint&& Lower, bigint&& Upper)
         : Lower(std::move(Lower)), Upper(std::move(Upper))
     {
@@ -64,16 +71,22 @@ struct IntRange {
     /// Returns true if the entire range is non-negative.
     [[nodiscard]] inline bool isNonNegative() const
     {
-        return Lower >= bigint(0);
+        return Lower.hasValue() && Lower.value() >= bigint(0);
     }
     /// Returns true if the entire range is positive.
-    [[nodiscard]] inline bool isPositive() const { return Lower > bigint(0); }
+    [[nodiscard]] inline bool isPositive() const
+    {
+        return Lower.hasValue() && Lower.value() > bigint(0);
+    }
     /// Returns true if the entire range is negative.
-    [[nodiscard]] inline bool isNegative() const { return Upper < bigint(0); }
+    [[nodiscard]] inline bool isNegative() const
+    {
+        return Upper.hasValue() && Upper.value() < bigint(0);
+    }
     /// Returns true if the entire range is non-positive.
     [[nodiscard]] inline bool isNonPositive() const
     {
-        return Upper <= bigint(0);
+        return Upper.hasValue() && Upper.value() <= bigint(0);
     }
 
     /**

@@ -1,0 +1,2 @@
+[31mSafety Violation[00m: Use of potentially null pointer in store at BadRange.cc:10
+clang++-17: error: clang frontend command failed with exit code 2 (use -v to see invocation)

@@ -6,4 +6,5 @@ add_llvm_pass_plugin(NullCheck
     src/NullAbstractInterpretation.cpp
     src/IntervalAnalysis.cpp
     src/IntRange.cpp
+    src/Bound.cpp
 )

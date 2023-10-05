@@ -225,8 +225,9 @@ bool NullAbstractInterpretation::inRange(const Use& Val,
             IntervalFacts_.get().InstructionInFacts.at(Inst).getValRange(Val);
         if (Interval.has_value()) {
             const auto IntVal = Interval.value();
-            return !(IntVal.Lower < bigint{0} ||
-                     IntVal.Upper >= bigint(std::to_string(Size)));
+            return !(IntVal.Lower < bound::Bound(0) ||
+                     IntVal.Upper >=
+                         bound::Bound(bigint(std::to_string(Size))));
         }
         return false;
     } else {

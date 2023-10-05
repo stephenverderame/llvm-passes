@@ -11,7 +11,7 @@ Checks:
   misc-throw-by-value-catch-by-reference,readability-inconsistent-declaration-parameter-name,
   -cppcoreguidelines-pro-type-reinterpret-cast,readability-container-*,readability-non-const-parameter,
   readability-suspicious-call-argument,-cppcoreguidelines-pro-bounds-pointer-arithmetic,
-  -cppcoreguidelines-pro-bounds-constant-array-index"
+  -cppcoreguidelines-pro-bounds-constant-array-index,-google-build-using-namespace,"
 WarningsAsErrors: "readability-*,bugprone-*,clang-*"
 HeaderFilterRegex: "*"
 AnalyzeTemporaryDtors: false

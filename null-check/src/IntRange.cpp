@@ -1,28 +1,26 @@
 #include "IntRange.hpp"
 
-// roughly 80-bit signed min and max
-const static bigint BigEnough = bigint("604462910000000000000000");
-const static bigint SmallEnough = bigint("-604462910000000000000000");
+using namespace bound;
 
 namespace
 {
-bigint toUnsigned(const bigint& A, unsigned int BitWidth)
+Bound toUnsigned(const Bound& A, unsigned int BitWidth)
 {
     // It would be better to have special inf and -inf values
-    if (A <= SmallEnough) {
-        return bigint{0};
-    } else if (A < bigint{0}) {
-        return A + bigint::_big_pow(bigint(2), bigint(BitWidth));
+    if (A.isNegInf()) {
+        return Bound(0);
+    } else if (A < Bound(0)) {
+        return A + Bound(bigint::_big_pow(bigint(2), bigint(BitWidth)));
     }
     return A;
 }
 
-bigint toSigned(const bigint& A, unsigned int BitWidth)
+Bound toSigned(const Bound& A, unsigned int BitWidth)
 {
-    if (A >= BigEnough) {
+    if (A.isPosInf()) {
         return A;
-    } else if (A >= bigint::_big_pow(bigint(2), bigint(BitWidth - 1))) {
-        return A - bigint::_big_pow(bigint(2), bigint(BitWidth));
+    } else if (A >= Bound(bigint::_big_pow(bigint(2), bigint(BitWidth - 1)))) {
+        return A - Bound(bigint::_big_pow(bigint(2), bigint(BitWidth)));
     }
     return A;
 }
@@ -50,7 +48,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toSigned(BitWidth);
-                Res.Upper = RHS.value().toSigned(BitWidth).Upper - bigint(1);
+                Res.Upper = RHS.value().toSigned(BitWidth).Upper - Bound(1);
                 return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
@@ -61,7 +59,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Upper = RHS.value().toUnsigned(BitWidth).Upper - bigint(1);
+                Res.Upper = RHS.value().toUnsigned(BitWidth).Upper - Bound(1);
                 return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
@@ -115,7 +113,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toSigned(BitWidth);
-                Res.Lower = RHS.value().toSigned(BitWidth).Lower + bigint(1);
+                Res.Lower = RHS.value().toSigned(BitWidth).Lower + Bound(1);
                 return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
@@ -126,7 +124,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower + bigint(1);
+                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower + Bound(1);
                 return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
@@ -157,18 +155,16 @@ IntRange IntRange::meet(const IntRange& A, const IntRange& B)
     IntRange Res;
     Res.Monotonicity = monoMeet(A.Monotonicity, B.Monotonicity);
     const auto Mono = Res.Monotonicity.intoOptional();
-    const auto UseSmallEnough =
+    const auto UseNegInf =
         !Mono.has_value() || Mono.value() == Monotonic::Decreasing;
-    const auto UseBigEnough =
+    const auto UsePosInf =
         !Mono.has_value() || Mono.value() == Monotonic::Increasing;
     Res.Lower = A.Lower == B.Lower
                     ? A.Lower
-                    : (UseSmallEnough ? SmallEnough
-                                      : bigint::_big_min(A.Lower, B.Lower));
-    Res.Upper =
-        A.Upper == B.Upper
-            ? A.Upper
-            : (UseBigEnough ? BigEnough : bigint::_big_max(A.Upper, B.Upper));
+                    : (UseNegInf ? Bound::makeNegInf() : min(A.Lower, B.Lower));
+    Res.Upper = A.Upper == B.Upper
+                    ? A.Upper
+                    : (UsePosInf ? Bound::makePosInf() : max(A.Upper, B.Upper));
     return Res;
 }
 
@@ -177,8 +173,8 @@ IntRange IntRange::join(const IntRange& A, const IntRange& B)
     IntRange Res;
     assert(A.Lower >= B.Lower && A.Upper <= B.Upper ||
            A.Lower <= B.Lower && A.Upper >= B.Upper);
-    Res.Lower = bigint::_big_max(A.Lower, B.Lower);
-    Res.Upper = bigint::_big_min(A.Upper, B.Upper);
+    Res.Lower = max(A.Lower, B.Lower);
+    Res.Upper = min(A.Upper, B.Upper);
     return Res;
 }
 
@@ -248,16 +244,16 @@ IntRange IntRange::remainder(const IntRange& Other, bool Signed) const
 {
     IntRange Res;
     Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
-    auto AbsLower = bigint::_big_abs(Other.Lower);
-    auto AbsUpper = bigint::_big_abs(Other.Upper);
+    auto AbsLower = abs(Other.Lower);
+    auto AbsUpper = abs(Other.Upper);
     if (AbsUpper < AbsLower) {
         std::swap(AbsLower, AbsUpper);
     }
     if (!Signed) {
-        Res.Lower = bigint(0);
+        Res.Lower = Bound(0);
         Res.Upper = AbsUpper;
     } else {
-        Res.Lower = bigint(0) - AbsUpper;
+        Res.Lower = Bound(0) - AbsUpper;
         Res.Upper = AbsUpper;
     }
     return Res;
@@ -271,8 +267,8 @@ IntRange operator<<(const IntRange& A, const IntRange& B)
                 A.Monotonicity == LatticeElem<Monotonic>(Monotonic::Increasing)
             ? LatticeElem<Monotonic>(Monotonic::Increasing)
             : LatticeElem<Monotonic>::makeBottom();
-    Res.Lower = A.Lower * bigint::_big_pow(bigint(2), B.Lower);
-    Res.Upper = A.Upper * bigint::_big_pow(bigint(2), B.Upper);
+    Res.Lower = A.Lower * pow(2, B.Lower);
+    Res.Upper = A.Upper * pow(2, B.Upper);
     return Res;
 }
 
@@ -282,8 +278,8 @@ IntRange IntRange::toSigned(unsigned int BitWidth) const
     const auto A = ::toSigned(Lower, BitWidth);
     const auto B = ::toSigned(Upper, BitWidth);
     Res.Monotonicity = Monotonicity;
-    Res.Lower = bigint::_big_min(A, B);
-    Res.Upper = bigint::_big_max(A, B);
+    Res.Lower = min(A, B);
+    Res.Upper = max(A, B);
     return Res;
 }
 
@@ -293,8 +289,8 @@ IntRange IntRange::toUnsigned(unsigned int BitWidth) const
     const auto A = ::toUnsigned(Lower, BitWidth);
     const auto B = ::toUnsigned(Upper, BitWidth);
     Res.Monotonicity = Monotonicity;
-    Res.Lower = bigint::_big_min(A, B);
-    Res.Upper = bigint::_big_max(A, B);
+    Res.Lower = min(A, B);
+    Res.Upper = max(A, B);
     return Res;
 }
 
@@ -302,8 +298,8 @@ IntRange IntRange::pow(bigint&& Exponent) const
 {
     IntRange Res;
     Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
-    Res.Lower = bigint::_big_pow(Lower, Exponent);
-    Res.Upper = bigint::_big_pow(Upper, Exponent);
+    Res.Lower = bound::pow(Lower, bound::Bound(Exponent));
+    Res.Upper = bound::pow(Upper, bound::Bound(Exponent));
     return Res;
 }
 
@@ -311,8 +307,8 @@ IntRange IntRange::exponentiate(bigint&& Base) const
 {
     IntRange Res;
     Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
-    Res.Lower = bigint::_big_pow(Base, Lower);
-    Res.Upper = bigint::_big_pow(Base, Upper);
+    Res.Lower = bound::pow(Bound(Base), Lower);
+    Res.Upper = bound::pow(Bound(Base), Upper);
     return Res;
 }
 
