@@ -32,9 +32,9 @@ struct IntRange {
      * unequal, we set that bound to be inf or -inf, for the upper and lower
      * bounds respectively.
      */
-    static IntRange meet(const IntRange& A, const IntRange& B);
+    [[nodiscard]] static IntRange meet(const IntRange& A, const IntRange& B);
     /** Computes the least upper bound of two ranges (range intersection) */
-    static IntRange join(const IntRange& A, const IntRange& B);
+    [[nodiscard]] static IntRange join(const IntRange& A, const IntRange& B);
     bool operator==(const IntRange& Other) const = default;
 
     /// @brief Create a range from a single integer.
@@ -46,35 +46,58 @@ struct IntRange {
     }
 
     /// Converts this range to a signed range with the given bit width.
-    IntRange toSigned(unsigned int BitWidth) const;
+    [[nodiscard]] IntRange toSigned(unsigned int BitWidth) const;
     /// Converts this range to an unsigned range with the given bit width.
-    IntRange toUnsigned(unsigned int BitWidth) const;
+    [[nodiscard]] IntRange toUnsigned(unsigned int BitWidth) const;
     /// Computes `this ** A`
-    IntRange pow(bigint&& Exponent) const;
+    [[nodiscard]] IntRange pow(bigint&& Exponent) const;
     /// Computes `Base ** this`
-    IntRange exponentiate(bigint&& Base) const;
+    [[nodiscard]] IntRange exponentiate(bigint&& Base) const;
 
-    IntRange remainder(const IntRange& Other, bool Signed = true) const;
-    IntRange unsignedRemainder(const IntRange& Other) const
+    [[nodiscard]] IntRange remainder(const IntRange& Other,
+                                     bool Signed = true) const;
+    [[nodiscard]] IntRange unsignedRemainder(const IntRange& Other) const
     {
         return remainder(Other, false);
     }
 
     /// Returns true if the entire range is non-negative.
-    inline bool isNonNegative() const { return Lower >= bigint(0); }
+    [[nodiscard]] inline bool isNonNegative() const
+    {
+        return Lower >= bigint(0);
+    }
     /// Returns true if the entire range is positive.
-    inline bool isPositive() const { return Lower > bigint(0); }
+    [[nodiscard]] inline bool isPositive() const { return Lower > bigint(0); }
     /// Returns true if the entire range is negative.
-    inline bool isNegative() const { return Upper < bigint(0); }
+    [[nodiscard]] inline bool isNegative() const { return Upper < bigint(0); }
     /// Returns true if the entire range is non-positive.
-    inline bool isNonPositive() const { return Upper <= bigint(0); }
+    [[nodiscard]] inline bool isNonPositive() const
+    {
+        return Upper <= bigint(0);
+    }
+
+    /**
+     * If the lower bound has been adjusted, adjusts the upper bound to
+     * prevent inconsistencies.
+     *
+     * Ex. (10, 0) -> (10, 10)
+     */
+    [[nodiscard]] IntRange fixUpperBound() const;
+
+    /**
+     * If the upper bound has been adjusted, adjusts the lower bound to
+     * prevent inconsistencies.
+     *
+     * Ex. (10, 0) -> (0, 0)
+     */
+    [[nodiscard]] IntRange fixLowerBound() const;
 };
 
-IntRange operator*(const IntRange& A, const IntRange& B);
-IntRange operator+(const IntRange& A, const IntRange& B);
-IntRange operator-(const IntRange& A, const IntRange& B);
-IntRange operator/(const IntRange& A, const IntRange& B);
-IntRange operator<<(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange operator*(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange operator+(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange operator-(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange operator/(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange operator<<(const IntRange& A, const IntRange& B);
 
 /**
  * @brief Returns the stricter (smaller distance between upper and lower bounds)
@@ -84,7 +107,7 @@ IntRange operator<<(const IntRange& A, const IntRange& B);
  * @param B
  * @return IntRange
  */
-IntRange smallerRange(const IntRange& A, const IntRange& B);
+[[nodiscard]] IntRange smallerRange(const IntRange& A, const IntRange& B);
 
 /**
  * @brief Returns a new lattice element that can be assumed when
@@ -98,7 +121,6 @@ IntRange smallerRange(const IntRange& A, const IntRange& B);
  * @param Cond the condition of the comparison
  * @return LatticeElem<IntRange>
  */
-LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
-                                         const LatticeElem<IntRange>& RHS,
-                                         uint64_t BitWidth,
-                                         llvm::ICmpInst::Predicate Cond);
+[[nodiscard]] LatticeElem<IntRange> adjustForCondition(
+    const LatticeElem<IntRange>& LHS, const LatticeElem<IntRange>& RHS,
+    uint64_t BitWidth, llvm::ICmpInst::Predicate Cond);

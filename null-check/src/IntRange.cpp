@@ -1,22 +1,23 @@
 #include "IntRange.hpp"
 
+// roughly 80-bit signed min and max
+const static bigint BigEnough = bigint("604462910000000000000000");
+const static bigint SmallEnough = bigint("-604462910000000000000000");
+
 namespace
 {
 bigint toUnsigned(const bigint& A, unsigned int BitWidth)
 {
     if (A < bigint{0}) {
-        return A + bigint::_big_pow(bigint(2),
-                                    bigint(static_cast<int64_t>(BitWidth)));
+        return A + bigint::_big_pow(bigint(2), bigint(BitWidth));
     }
     return A;
 }
 
 bigint toSigned(const bigint& A, unsigned int BitWidth)
 {
-    if (A >= bigint::_big_pow(bigint(2),
-                              bigint(static_cast<int64_t>(BitWidth) - 1))) {
-        return A - bigint::_big_pow(bigint(2),
-                                    bigint(static_cast<int64_t>(BitWidth)));
+    if (A >= bigint::_big_pow(bigint(2), bigint(BitWidth - 1))) {
+        return A - bigint::_big_pow(bigint(2), bigint(BitWidth));
     }
     return A;
 }
@@ -45,7 +46,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toSigned(BitWidth);
                 Res.Upper = RHS.value().toSigned(BitWidth).Upper - bigint(1);
-                return LatticeElem<IntRange>(Res);
+                return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
             }
@@ -56,7 +57,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toUnsigned(BitWidth);
                 Res.Upper = RHS.value().toUnsigned(BitWidth).Upper - bigint(1);
-                return LatticeElem<IntRange>(Res);
+                return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
             }
@@ -67,7 +68,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toSigned(BitWidth);
                 Res.Upper = RHS.value().toSigned(BitWidth).Upper;
-                return LatticeElem<IntRange>(Res);
+                return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
             }
@@ -78,7 +79,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             } else if (LHS.hasValue() && RHS.hasValue()) {
                 auto Res = LHS.value().toUnsigned(BitWidth);
                 Res.Upper = RHS.value().toUnsigned(BitWidth).Upper;
-                return LatticeElem<IntRange>(Res);
+                return LatticeElem<IntRange>(Res.fixLowerBound());
             } else {
                 return LHS;
             }
@@ -87,9 +88,9 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             if (LHS.isBottom()) {
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = RHS.value().toSigned(BitWidth);
-                Res.Lower = LHS.value().toSigned(BitWidth).Lower;
-                return LatticeElem<IntRange>(Res);
+                auto Res = LHS.value().toSigned(BitWidth);
+                Res.Lower = RHS.value().toSigned(BitWidth).Lower;
+                return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
             }
@@ -98,9 +99,9 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             if (LHS.isBottom()) {
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = RHS.value().toUnsigned(BitWidth);
-                Res.Lower = LHS.value().toUnsigned(BitWidth).Lower;
-                return LatticeElem<IntRange>(Res);
+                auto Res = LHS.value().toUnsigned(BitWidth);
+                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower;
+                return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
             }
@@ -108,9 +109,9 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             if (LHS.isBottom()) {
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = RHS.value().toSigned(BitWidth);
-                Res.Lower = LHS.value().toSigned(BitWidth).Lower + bigint(1);
-                return LatticeElem<IntRange>(Res);
+                auto Res = LHS.value().toSigned(BitWidth);
+                Res.Lower = RHS.value().toSigned(BitWidth).Lower + bigint(1);
+                return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
             }
@@ -119,9 +120,9 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             if (LHS.isBottom()) {
                 return RHS;
             } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = RHS.value().toUnsigned(BitWidth);
-                Res.Lower = LHS.value().toUnsigned(BitWidth).Lower + bigint(1);
-                return LatticeElem<IntRange>(Res);
+                auto Res = LHS.value().toUnsigned(BitWidth);
+                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower + bigint(1);
+                return LatticeElem<IntRange>(Res.fixUpperBound());
             } else {
                 return LHS;
             }
@@ -130,10 +131,6 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
             return LHS;
     }
 }
-
-// roughly 80-bit signed min and max
-const static bigint BigEnough = bigint("604462910000000000000000");
-const static bigint SmallEnough = bigint("-604462910000000000000000");
 
 LatticeElem<Monotonic> monoMeet(const LatticeElem<Monotonic>& A,
                                 const LatticeElem<Monotonic>& B)
@@ -311,5 +308,23 @@ IntRange IntRange::exponentiate(bigint&& Base) const
     Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     Res.Lower = bigint::_big_pow(Base, Lower);
     Res.Upper = bigint::_big_pow(Base, Upper);
+    return Res;
+}
+
+IntRange IntRange::fixLowerBound() const
+{
+    auto Res = *this;
+    if (Res.Lower > Res.Upper) {
+        Res.Lower = Res.Upper;
+    }
+    return Res;
+}
+
+IntRange IntRange::fixUpperBound() const
+{
+    auto Res = *this;
+    if (Res.Lower > Res.Upper) {
+        Res.Upper = Res.Lower;
+    }
     return Res;
 }

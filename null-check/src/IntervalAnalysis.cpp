@@ -210,7 +210,7 @@ TransferRet IntervalAnalysis::transferCast(const CastInst* Cast) const
     auto Res = *this;
     assert(Cast->getNumOperands() == 1);
     const auto Arg = Res.getRange(Cast->getOperand(0));
-    Res.Ranges_[Cast] = std::make_shared<SingleFact>(*Arg);
+    Res.Ranges_[Cast] = Arg;
     return Res;
 }
 

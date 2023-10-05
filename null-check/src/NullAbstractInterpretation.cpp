@@ -180,6 +180,7 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
     }
+    // TODO: intrinsics and invalidating non-const pointer arguments
     return Res;
 }
 
@@ -225,7 +226,7 @@ bool NullAbstractInterpretation::inRange(const Use& Val,
         if (Interval.has_value()) {
             const auto IntVal = Interval.value();
             return !(IntVal.Lower < bigint{0} ||
-                     IntVal.Upper > bigint(std::to_string(Size)));
+                     IntVal.Upper >= bigint(std::to_string(Size)));
         }
         return false;
     } else {
