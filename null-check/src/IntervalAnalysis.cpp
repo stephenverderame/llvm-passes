@@ -316,101 +316,117 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
     TRes.DebugNames_[LHS] = getDebugName(LHS);
     TRes.DebugNames_[RHS] = getDebugName(RHS);
     const auto BitWidth = LHS->getType()->getIntegerBitWidth();
-    const auto LHSRange = TRes.getRange(LHS);
-    const auto RHSRange = TRes.getRange(RHS);
+    const auto LHSRange = *TRes.getRange(LHS);
+    const auto RHSRange = *TRes.getRange(RHS);
     auto FRes = TRes;
     switch (Cmp->getPredicate()) {
         case ICmpInst::ICMP_EQ:
             *TRes.Ranges_[LHS] =
-                SingleFact::join(*RHSRange, *LHSRange, smallerRange);
+                SingleFact::join(RHSRange, LHSRange, smallerRange);
             *TRes.Ranges_[RHS] =
-                SingleFact::join(*LHSRange, *RHSRange, smallerRange);
+                SingleFact::join(LHSRange, RHSRange, smallerRange);
             break;
         case ICmpInst::ICMP_NE:
             *FRes.Ranges_[LHS] =
-                SingleFact::join(*RHSRange, *LHSRange, smallerRange);
+                SingleFact::join(RHSRange, LHSRange, smallerRange);
             *FRes.Ranges_[RHS] =
-                SingleFact::join(*LHSRange, *RHSRange, smallerRange);
+                SingleFact::join(LHSRange, RHSRange, smallerRange);
             break;
         case ICmpInst::ICMP_SLT:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SLT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SGE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGT);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SGE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SLT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLE);
             break;
         case ICmpInst::ICMP_ULT:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_ULT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_UGE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGT);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_UGE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_ULT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULE);
             break;
         case ICmpInst::ICMP_SGT:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SGT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SLE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLT);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SLE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SGT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGE);
             break;
         case ICmpInst::ICMP_UGT:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_UGT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_ULE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULT);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_ULE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_UGT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGE);
             break;
         case ICmpInst::ICMP_SLE:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SLE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SGT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGE);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SGT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SLE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLT);
             break;
         case ICmpInst::ICMP_ULE:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_ULE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_UGT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGE);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_UGT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_ULE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULT);
             break;
         case ICmpInst::ICMP_SGE:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SGE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SLT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLE);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_SLT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_SGE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGT);
             break;
         case ICmpInst::ICMP_UGE:
             *TRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_UGE);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGE);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *TRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_ULT);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULE);
             *FRes.Ranges_[LHS] = adjustForCondition(
-                *LHSRange, *RHSRange, BitWidth, ICmpInst::ICMP_ULT);
+                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULT);
+            // NOLINTNEXTLINE(readability-suspicious-call-argument)
             *FRes.Ranges_[RHS] = adjustForCondition(
-                *RHSRange, *LHSRange, BitWidth, ICmpInst::ICMP_UGE);
+                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGT);
             break;
         default:
             break;

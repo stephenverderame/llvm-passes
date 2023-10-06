@@ -105,6 +105,8 @@ class bigint
     bigint& operator=(bigint&&) = default;
     ~bigint() = default;
 
+    inline std::string to_str() const { return str; }
+
     // operator overloading for output stream {<<}
     inline friend std::ostream& operator<<(std::ostream& stream,
                                            const bigint& n)

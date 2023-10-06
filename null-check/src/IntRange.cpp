@@ -1,12 +1,16 @@
 #include "IntRange.hpp"
 
+#include <llvm-17/llvm/IR/Instructions.h>
+
+#include "Bound.hpp"
+#include "df/LatticeElem.hpp"
+
 using namespace bound;
 
 namespace
 {
 Bound toUnsigned(const Bound& A, unsigned int BitWidth)
 {
-    // It would be better to have special inf and -inf values
     if (A.isNegInf()) {
         return Bound(0);
     } else if (A < Bound(0)) {
@@ -24,16 +28,80 @@ Bound toSigned(const Bound& A, unsigned int BitWidth)
     }
     return A;
 }
-}  // namespace
-
-IntRange smallerRange(const IntRange& A, const IntRange& B)
+/**
+ * @brief Computes `LHS Cond RHS` when `LHS` is bottom and `RHS` is not top.
+ *
+ * @param RHS
+ * @param Cond
+ * @return LatticeElem<IntRange>
+ */
+LatticeElem<IntRange> opWhenLhsBottom(const LatticeElem<IntRange>& RHS,
+                                      llvm::ICmpInst::Predicate Cond)
 {
-    if (B.Upper - B.Lower < A.Upper - A.Lower) {
-        return B;
+    if (RHS.isBottom()) {
+        return RHS;
     }
-    return A;
+    assert(!RHS.isTop());
+    auto Res = RHS.value();
+    switch (Cond) {
+        case llvm::ICmpInst::ICMP_SLE:
+            Res.Lower = bound::Bound::makeNegInf();
+            break;
+        case llvm::ICmpInst::ICMP_SLT:
+            Res.Upper = Res.Upper - Bound(1);
+            Res.Lower = bound::Bound::makeNegInf();
+            break;
+        case llvm::ICmpInst::ICMP_SGE:
+            Res.Upper = bound::Bound::makePosInf();
+            break;
+        case llvm::ICmpInst::ICMP_SGT:
+            Res.Lower = Res.Lower + Bound(1);
+            Res.Upper = bound::Bound::makePosInf();
+            break;
+        case llvm::ICmpInst::ICMP_ULT:
+            Res.Lower = bound::Bound(0);
+            Res.Upper = Res.Upper - Bound(1);
+            break;
+        case llvm::ICmpInst::ICMP_ULE:
+            Res.Lower = bound::Bound(0);
+            Res.Upper = Res.Upper;
+            break;
+        default:
+            assert(false);
+    }
+    return LatticeElem<IntRange>(Res);
 }
 
+/**
+ * @brief Helper function for `adjustForCondition`. This function factors out
+ * repeated bottom and top handling logic.
+ *
+ * @tparam Func function type of (IntRange, IntRange) -> IntRange
+ * @param LHS the lattice element for the left hand side of the comparison
+ * @param RHS the lattice element for the right hand side of the comparison
+ * @param Cond the condition of the comparison
+ * @param Fn a function which takes two IntRange's and returns a new IntRange
+ * that can be assumed to be the range of `LHS` when `Cond` is true
+ * @return LatticeElem<IntRange>
+ */
+template <typename Func>
+LatticeElem<IntRange> adjustForConditionHelper(const LatticeElem<IntRange>& LHS,
+                                               const LatticeElem<IntRange>& RHS,
+                                               llvm::ICmpInst::Predicate Cond,
+                                               Func&& Fn)
+{
+    if (LHS.isBottom() && !RHS.isTop()) {
+        return opWhenLhsBottom(RHS, Cond);
+    } else if (LHS.hasValue() && RHS.hasValue()) {
+        return LatticeElem<IntRange>(Fn(LHS, RHS));
+    } else if (LHS.isTop()) {
+        return RHS;
+    } else {
+        return LHS;
+    }
+}
+
+}  // namespace
 // NOLINTNEXTLINE(readability-function-*)
 LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
                                          const LatticeElem<IntRange>& RHS,
@@ -43,96 +111,75 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
     // NOLINTNEXTLINE
     using namespace llvm;
     switch (Cond) {
-        case ICmpInst::ICMP_SLT: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toSigned(BitWidth);
-                Res.Upper = RHS.value().toSigned(BitWidth).Upper - Bound(1);
-                return LatticeElem<IntRange>(Res.fixLowerBound());
-            } else {
-                return LHS;
-            }
-        }
-        case ICmpInst::ICMP_ULT: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Upper = RHS.value().toUnsigned(BitWidth).Upper - Bound(1);
-                return LatticeElem<IntRange>(Res.fixLowerBound());
-            } else {
-                return LHS;
-            }
-        }
-        case ICmpInst::ICMP_SLE: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toSigned(BitWidth);
-                Res.Upper = RHS.value().toSigned(BitWidth).Upper;
-                return LatticeElem<IntRange>(Res.fixLowerBound());
-            } else {
-                return LHS;
-            }
-        }
-        case ICmpInst::ICMP_ULE: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Upper = RHS.value().toUnsigned(BitWidth).Upper;
-                return LatticeElem<IntRange>(Res.fixLowerBound());
-            } else {
-                return LHS;
-            }
-        }
-        case ICmpInst::ICMP_SGE: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toSigned(BitWidth);
-                Res.Lower = RHS.value().toSigned(BitWidth).Lower;
-                return LatticeElem<IntRange>(Res.fixUpperBound());
-            } else {
-                return LHS;
-            }
-        }
+        case ICmpInst::ICMP_SLT:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toSigned(BitWidth);
+                    Res.Upper = RHS.value().toSigned(BitWidth).Upper - Bound(1);
+                    return Res.fixLowerBound();
+                });
+        case ICmpInst::ICMP_ULT:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toUnsigned(BitWidth);
+                    Res.Upper =
+                        RHS.value().toUnsigned(BitWidth).Upper - Bound(1);
+                    return Res.fixLowerBound();
+                });
+        case ICmpInst::ICMP_SLE:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toSigned(BitWidth);
+                    Res.Upper = RHS.value().toSigned(BitWidth).Upper;
+                    return Res.fixLowerBound();
+                });
+        case ICmpInst::ICMP_ULE:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toUnsigned(BitWidth);
+                    Res.Upper = RHS.value().toUnsigned(BitWidth).Upper;
+                    return Res.fixLowerBound();
+                });
+        case ICmpInst::ICMP_SGE:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toSigned(BitWidth);
+                    Res.Lower = RHS.value().toSigned(BitWidth).Lower;
+                    return Res.fixUpperBound();
+                });
         case ICmpInst::ICMP_UGE:
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower;
-                return LatticeElem<IntRange>(Res.fixUpperBound());
-            } else {
-                return LHS;
-            }
-        case ICmpInst::ICMP_SGT: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toSigned(BitWidth);
-                Res.Lower = RHS.value().toSigned(BitWidth).Lower + Bound(1);
-                return LatticeElem<IntRange>(Res.fixUpperBound());
-            } else {
-                return LHS;
-            }
-        }
-        case ICmpInst::ICMP_UGT: {
-            if (LHS.isBottom()) {
-                return RHS;
-            } else if (LHS.hasValue() && RHS.hasValue()) {
-                auto Res = LHS.value().toUnsigned(BitWidth);
-                Res.Lower = RHS.value().toUnsigned(BitWidth).Lower + Bound(1);
-                return LatticeElem<IntRange>(Res.fixUpperBound());
-            } else {
-                return LHS;
-            }
-        }
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toUnsigned(BitWidth);
+                    Res.Lower = RHS.value().toUnsigned(BitWidth).Lower;
+                    return Res.fixUpperBound();
+                });
+        case ICmpInst::ICMP_SGT:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toSigned(BitWidth);
+                    Res.Lower = RHS.value().toSigned(BitWidth).Lower + Bound(1);
+                    return Res.fixUpperBound();
+                });
+        case ICmpInst::ICMP_UGT:
+            return adjustForConditionHelper(
+                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                    auto Res = LHS.value().toUnsigned(BitWidth);
+                    Res.Lower =
+                        RHS.value().toUnsigned(BitWidth).Lower + Bound(1);
+                    return Res.fixUpperBound();
+                });
         default:
             return LHS;
     }
+}
+
+IntRange smallerRange(const IntRange& A, const IntRange& B)
+{
+    if (B.Upper - B.Lower < A.Upper - A.Lower) {
+        return B;
+    }
+    return A;
 }
 
 LatticeElem<Monotonic> monoMeet(const LatticeElem<Monotonic>& A,

@@ -42,7 +42,7 @@ struct IntRange {
     bool operator==(const IntRange& Other) const = default;
 
     /// @brief Create a range from a single integer.
-    explicit IntRange(bigint&& I) : Lower(I), Upper(std::move(I)) {}
+    explicit IntRange(bigint&& I) : Lower(I), Upper(I) {}
     IntRange()
         : Lower(bound::Bound::makeNegInf()),
           Upper(bound::Bound::makePosInf()),
@@ -123,9 +123,9 @@ struct IntRange {
 [[nodiscard]] IntRange smallerRange(const IntRange& A, const IntRange& B);
 
 /**
- * @brief Returns a new lattice element that can be assumed when
- * `LHS Cond RHS` is true. The returned lattice element will be with
- * respect to the `LHS` argument, that is if `RHS` does not have a value,
+ * @brief Returns a new lattice element for the integer range of `LHS` that can
+ * be assumed when `LHS Cond RHS` is true. The returned lattice element will be
+ * with respect to the `LHS` argument, that is if `RHS` does not have a value,
  * the returned lattice element will be `LHS`.
  *
  * @param LHS the lattice element for the left hand side of the comparison
