@@ -23,27 +23,6 @@ using namespace llvm;
 using TransferRet = IntervalAnalysis::TransferRet;
 
 /**
- * @brief Returns true if A is at least as bounded as B.
- *
- * @param A
- * @param B
- * @return true
- * @return false
- */
-bool isMoreBounded(const LatticeElem<IntRange>& A,
-                   const LatticeElem<IntRange>& B)
-{
-    // TODO: handle RHS of conditions
-    static bool Test = true;
-    auto T = Test;
-    Test = !Test;
-    // this flips back and forth to always return false
-    // for reverse condition, ie if the condition is
-    // A < B, it won't add facts about B, just A
-    return T;
-}
-
-/**
  * @brief Get the value which is the canonical representative of `V`. The
  * canonical representative is the value that is used to represent `V` in the
  * mapping from values to ranges. For example, if `V` is a load instruction, the
@@ -381,6 +360,9 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
     // Canonical values for ease of debugging
     const auto CanonicalLHS = getCanonicalValue(LHS);
     const auto CanonicalRHS = getCanonicalValue(RHS);
+    std::string CmpTxt;
+    raw_string_ostream CmpStream(CmpTxt);
+    Cmp->print(CmpStream);
     auto FRes = TRes;
     switch (Cmp->getPredicate()) {
         case ICmpInst::ICMP_EQ:
@@ -396,148 +378,84 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                           SingleFact::join(LHSRange, RHSRange, smallerRange));
             break;
         case ICmpInst::ICMP_SLT:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLT));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGE));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGT));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLE));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLT));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGE));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGT));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLE));
             break;
         case ICmpInst::ICMP_ULT:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULT));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGE));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGT));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULE));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULT));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGE));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGT));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULE));
             break;
         case ICmpInst::ICMP_SGT:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGT));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLE));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLT));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGE));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGT));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLE));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLT));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGE));
             break;
         case ICmpInst::ICMP_UGT:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGT));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULE));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULT));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGE));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGT));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULE));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULT));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGE));
             break;
         case ICmpInst::ICMP_SLE:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLE));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGT));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGE));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLT));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLE));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGT));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGE));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLT));
             break;
         case ICmpInst::ICMP_ULE:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULE));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGT));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGE));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULT));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULE));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGT));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGE));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULT));
             break;
         case ICmpInst::ICMP_SGE:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGE));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLT));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SLE));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_SGT));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGE));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLT));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SLE));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_SGT));
             break;
         case ICmpInst::ICMP_UGE:
-            if (isMoreBounded(RHSRange, LHSRange)) {
-                TRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGE));
-                FRes.putRange(LHS,
-                              adjustForCondition(LHSRange, RHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULT));
-            }
-            if (isMoreBounded(LHSRange, RHSRange)) {
-                TRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_ULE));
-                FRes.putRange(RHS,
-                              adjustForCondition(RHSRange, LHSRange, BitWidth,
-                                                 ICmpInst::ICMP_UGT));
-            }
+            TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGE));
+            FRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULT));
+            TRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_ULE));
+            FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                  ICmpInst::ICMP_UGT));
             break;
         default:
             break;

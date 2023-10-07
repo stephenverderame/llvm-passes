@@ -106,7 +106,17 @@ LatticeElem<IntRange> adjustForConditionHelper(const LatticeElem<IntRange>& LHS,
     if (LHS.isBottom() && !RHS.isTop()) {
         return opWhenLhsBottom(RHS, Cond);
     } else if (LHS.hasValue() && RHS.hasValue()) {
-        return LatticeElem<IntRange>(Fn(LHS, RHS));
+        auto Res = Fn(LHS, RHS);
+        if (Res.Lower > Res.Upper) {
+            // if the bound is inconsistent, return top
+            // this occurs when, given the current information,
+            // the branch could not be taken
+
+            // so we return top so that a future iteration can correct this
+            // with more updated information
+            return LatticeElem<IntRange>::makeTop();
+        }
+        return LatticeElem(Res);
     } else if (LHS.isTop()) {
         return RHS;
     } else {
@@ -131,7 +141,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     Res.Upper =
                         min(Res.Upper,
                             RHS.value().toSigned(BitWidth).Upper - Bound(1));
-                    return Res.fixLowerBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_ULT:
             return adjustForConditionHelper(
@@ -140,7 +150,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     Res.Upper =
                         min(Res.Upper,
                             RHS.value().toUnsigned(BitWidth).Upper - Bound(1));
-                    return Res.fixLowerBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_SLE:
             return adjustForConditionHelper(
@@ -148,7 +158,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     auto Res = LHS.value().toSigned(BitWidth);
                     Res.Upper =
                         min(Res.Upper, RHS.value().toSigned(BitWidth).Upper);
-                    return Res.fixLowerBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_ULE:
             return adjustForConditionHelper(
@@ -156,7 +166,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     auto Res = LHS.value().toUnsigned(BitWidth);
                     Res.Upper =
                         min(Res.Upper, RHS.value().toUnsigned(BitWidth).Upper);
-                    return Res.fixLowerBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_SGE:
             return adjustForConditionHelper(
@@ -164,7 +174,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     auto Res = LHS.value().toSigned(BitWidth);
                     Res.Lower =
                         max(Res.Lower, RHS.value().toSigned(BitWidth).Lower);
-                    return Res.fixUpperBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_UGE:
             return adjustForConditionHelper(
@@ -172,7 +182,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     auto Res = LHS.value().toUnsigned(BitWidth);
                     Res.Lower =
                         max(Res.Lower, RHS.value().toUnsigned(BitWidth).Lower);
-                    return Res.fixUpperBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_SGT:
             return adjustForConditionHelper(
@@ -181,7 +191,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     Res.Lower =
                         max(Res.Lower,
                             RHS.value().toSigned(BitWidth).Lower + Bound(1));
-                    return Res.fixUpperBound();
+                    return Res;
                 });
         case ICmpInst::ICMP_UGT:
             return adjustForConditionHelper(
@@ -190,7 +200,7 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
                     Res.Lower =
                         max(Res.Lower,
                             RHS.value().toUnsigned(BitWidth).Lower + Bound(1));
-                    return Res.fixUpperBound();
+                    return Res;
                 });
         default:
             return A;
