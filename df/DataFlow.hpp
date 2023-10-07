@@ -12,6 +12,7 @@
 #include <llvm-17/llvm/IR/Constants.h>
 #include <llvm-17/llvm/IR/Instruction.h>
 #include <llvm-17/llvm/IR/Instructions.h>
+#include <llvm-17/llvm/Support/raw_ostream.h>
 
 #include <concepts>
 #include <deque>
@@ -85,9 +86,14 @@ struct DataFlowFacts {
  */
 template <typename T>
 concept Fact = requires(const T& t) {
-    /// Greatest lower bound of two facts
+    /**
+     * @brief Greatest lower bound of two facts.
+     * @param A The first fact
+     * @param B The second fact
+     * @param BB The basic block that the facts are being met right before
+     */
     {
-        T::meet(t, t)
+        T::meet(t, t, std::declval<const llvm::BasicBlock*>())
     } -> std::convertible_to<T>;
 
     /**
@@ -179,8 +185,9 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
     if (std::holds_alternative<F>(Out)) {
         for (const auto& Succ : Dir::successors(BB)) {
             const auto& SuccFirstInst = *Dir::begin(*Succ);
-            Facts.InstructionInFacts.at(&SuccFirstInst) = F::meet(
-                Facts.InstructionInFacts.at(&SuccFirstInst), std::get<F>(Out));
+            Facts.InstructionInFacts.at(&SuccFirstInst) =
+                F::meet(Facts.InstructionInFacts.at(&SuccFirstInst),
+                        std::get<F>(Out), Succ);
         }
     } else {
         const auto& OutMap = std::get<0>(Out);
@@ -189,7 +196,7 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
             const auto& SuccFirstInst = *Dir::begin(SuccBB);
             Facts.InstructionInFacts.at(&SuccFirstInst) =
                 F::meet(Facts.InstructionInFacts.at(&SuccFirstInst),
-                        OutMap.at(&SuccBB));
+                        OutMap.at(&SuccBB), Succ);
         }
     }
     return Facts;
@@ -377,4 +384,64 @@ inline std::string getDebugName(const llvm::Value* I)
         Res = Res.substr(0, EqIdx);
     }
     return Res;
+}
+
+/**
+ * @brief Gets a numeric ID for a basic block
+ *
+ * @param BB
+ * @return std::string
+ */
+inline std::string toID(const llvm::BasicBlock& BB)
+{
+    std::string Str;
+    llvm::raw_string_ostream Stream(Str);
+    BB.printAsOperand(Stream, false);
+    if (auto Percent = Str.find_first_of('%'); Percent != std::string::npos) {
+        Str = Str.substr(Percent + 1);
+    }
+    return Str;
+}
+
+/**
+ * @brief Prints a graphviz dot file for a function and its dataflow analysis
+ * results into the given output stream.
+ *
+ * @tparam F The fact type, must provide an `operator<<` overload for
+ * llvm::raw_ostream
+ * @param Out The output stream
+ * @param Analysis The dataflow analysis results
+ * @param Fn The function that the analysis was performed on
+ */
+template <Fact F>
+llvm::raw_ostream& analysis2Cfg(llvm::raw_ostream& Out,
+                                const DataFlowFacts<F>& Analysis,
+                                const llvm::Function& Fn)
+{
+    Out << "digraph " << Fn.getName() << " {\n";
+    for (auto& BB : Fn) {
+        Out << "\t" << toID(BB) << R"( [shape="rectangle",label=")";
+        Out << Analysis.InstructionInFacts.at(&*BB.begin()) << "\\n\\n";
+        for (const auto& Inst : BB) {
+            Out << Inst << "\\n";
+        }
+        Out << "\"];\n";
+    }
+
+    for (auto& BB : Fn) {
+        const auto Terminator = BB.getTerminator();
+        for (const auto& Succ : successors(&BB)) {
+            Out << "\t" << toID(BB) << " -> " << toID(*Succ);
+            if (Terminator->getNumSuccessors() > 1) {
+                if (BB.getTerminator()->getSuccessor(0) == Succ) {
+                    Out << " [label=\"T\"]";
+                } else {
+                    Out << " [label=\"F\"]";
+                }
+            }
+            Out << ";\n";
+        }
+    }
+    Out << "}\n\n";
+    return Out;
 }

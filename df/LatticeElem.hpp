@@ -50,7 +50,7 @@ class LatticeElem
      * @param A The first fact
      * @param B The second fact
      * @param M The meet function, which must be callable with two facts and
-     * return a new fact
+     * return a new fact or a lattice element.
      * @return a new lattice element that represents the meet of the two lattice
      * elements
      */
@@ -69,7 +69,7 @@ class LatticeElem
         }
         if constexpr (std::is_convertible_v<decltype(M(A.value(), B.value())),
                                             LatticeElem>) {
-            return M(A, B);
+            return M(A.value(), B.value());
         } else {
             return LatticeElem(M(A.value(), B.value()));
         }
