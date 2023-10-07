@@ -175,7 +175,8 @@ class NullAbstractInterpretation
   public:
     /// @see Fact::meet
     static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
-                                           const NullAbstractInterpretation& B);
+                                           const NullAbstractInterpretation& B,
+                                           const llvm::BasicBlock* BB);
 
     /// @see Fact::transfer
     TransferRetType<NullAbstractInterpretation> transfer(

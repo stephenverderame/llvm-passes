@@ -1,39 +1,156 @@
 #include "IntervalAnalysis.hpp"
 
 #include <llvm-17/llvm/ADT/SmallVector.h>
+#include <llvm-17/llvm/Analysis/CGSCCPassManager.h>
 #include <llvm-17/llvm/IR/Constants.h>
 #include <llvm-17/llvm/IR/DerivedTypes.h>
 #include <llvm-17/llvm/IR/InstrTypes.h>
 #include <llvm-17/llvm/IR/Instructions.h>
 #include <llvm-17/llvm/IR/Value.h>
 #include <llvm-17/llvm/Support/Casting.h>
+#include <llvm-17/llvm/Support/raw_ostream.h>
 #include <llvm/ADT/SmallString.h>
 
 #include <memory>
 #include <unordered_map>
 
 #include "df/DataFlow.hpp"
+#include "df/LatticeElem.hpp"
 #include "external/bigint.h"
 
 // NOLINTNEXTLINE
 using namespace llvm;
 using TransferRet = IntervalAnalysis::TransferRet;
 
-IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
-                                        const IntervalAnalysis& B)
+/**
+ * @brief Returns true if A is at least as bounded as B.
+ *
+ * @param A
+ * @param B
+ * @return true
+ * @return false
+ */
+bool isMoreBounded(const LatticeElem<IntRange>& A,
+                   const LatticeElem<IntRange>& B)
 {
-    std::unordered_map<const SingleFact*, std::shared_ptr<SingleFact>>
-        ClonedRanges;
+    // TODO: handle RHS of conditions
+    static bool Test = true;
+    auto T = Test;
+    Test = !Test;
+    return T;
+    // if (B.isBottom()) {
+    //     return true;
+    // }
+    // if (A.isBottom()) {
+    //     // B is not bottom here
+    //     return false;
+    // }
+    // if (A.hasValue() && B.hasValue()) {
+    //     return A.value().size() <= B.value().size();
+    // }
+    // // A and B are top
+    // return true;
+}
+
+const llvm::Value* getCanonicalValue(const llvm::Value* V)
+{
+    if (const auto Cast = dyn_cast<CastInst>(V); Cast != nullptr) {
+        return getCanonicalValue(Cast->getOperand(0));
+    } else if (const auto Load = dyn_cast<LoadInst>(V); Load != nullptr) {
+        return getCanonicalValue(Load->getPointerOperand());
+    } else {
+        return V;
+    }
+    // return V;
+}
+
+/**
+ * @brief Gets the version of the range of `V` that is valid at the beginning of
+ * `BB`. Pops the scope stack until the top of the stack dominates `BB`. Returns
+ * this new top.
+ *
+ * @param SF the fact to get the scope of
+ * @param BB the basic block to get the scope for
+ * @return std::shared_ptr<IntervalAnalysis::SingleFact>
+ */
+IntervalAnalysis::SingleFact IntervalAnalysis::popScopeStack(
+    const Value* V, const llvm::BasicBlock* BB)
+{
+    if (!Scopes_.contains(V)) {
+        return getRange(V);
+    }
+    auto& Scopes = Scopes_.at(V);
+    auto LastPtr = std::cref(getRange(V));
+    while (!Scopes.empty()) {
+        const auto& [Inst, Fact] = Scopes.front();
+        if (DT_.get().dominates(Inst, BB)) {
+            return LastPtr.get();
+        }
+        LastPtr = std::cref(Fact);
+        Scopes.pop_front();
+    }
+    return LastPtr.get();
+}
+
+void IntervalAnalysis::putScope(const Value* V, const Instruction* I,
+                                const SingleFact& Fact)
+{
+    V = getCanonicalValue(V);
+    if (!Scopes_.contains(V)) {
+        Scopes_.emplace(V, ScopeStack());
+    }
+    Scopes_.at(V).emplace_back(I, Fact);
+}
+
+/**
+ * @brief Gets the version of the range of `V` that is valid at the beginning of
+ * `BB`.
+ *
+ * @param V
+ * @param BB
+ * @return IntervalAnalysis::SingleFact
+ */
+IntervalAnalysis::SingleFact IntervalAnalysis::getTopScope(
+    const llvm::Value* V, const llvm::BasicBlock* BB) const
+{
+    if (!Scopes_.contains(V)) {
+        return getRangeConst(V);
+    }
+    auto& Scopes = Scopes_.at(V);
+    auto LastPtr = getRangeConst(V);
+    for (const auto& [Inst, Fact] : Scopes) {
+        if (DT_.get().dominates(Inst, BB)) {
+            return LastPtr;
+        }
+        LastPtr = Fact;
+    }
+    return LastPtr;
+}
+
+bool IntervalAnalysis::contains(const llvm::Value* V) const
+{
+    return Ranges_.contains(getCanonicalValue(V));
+}
+
+IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
+                                        const IntervalAnalysis& B,
+                                        const BasicBlock* BB)
+{
     auto Res = A;
     for (const auto& [Val, Range] : B.Ranges_) {
-        if (Res.Ranges_.contains(Val)) {
-            Res.Ranges_[Val] = std::make_shared<SingleFact>(
-                SingleFact::meet(*Res.Ranges_[Val], *Range, IntRange::meet));
-        } else if (ClonedRanges.contains(Range.get())) {
-            Res.Ranges_[Val] = ClonedRanges.at(Range.get());
+        if (Res.contains(Val)) {
+            Res.putRange(
+                Val, SingleFact::meet(Res.getRangeConst(Val),
+                                      B.getRangeConst(Val), IntRange::meet));
         } else {
-            const auto Clone = std::make_shared<SingleFact>(*Range);
-            Res.Ranges_[Val] = Clone;
+            Res.putRange(Val, Range);
+        }
+    }
+    for (const auto& [Val, Scope] : B.Scopes_) {
+        if (Res.Scopes_.contains(Val)) {
+            // assert(Res.Scopes_.at(Val) == Scope);
+        } else {
+            Res.Scopes_.emplace(Val, Scope);
         }
     }
     for (const auto& [Val, Name] : B.DebugNames_) {
@@ -46,50 +163,47 @@ IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
 
 bool IntervalAnalysis::operator==(const IntervalAnalysis& Other) const
 {
-    if (Ranges_.size() != Other.Ranges_.size()) {
-        return false;
-    }
-    for (const auto& [Val, Range] : Ranges_) {
-        if (!Other.Ranges_.contains(Val)) {
-            return false;
-        }
-        if (*Range != *Other.Ranges_.at(Val)) {
-            return false;
-        }
-    }
-    return true;
+    // for (const auto& [Val, Range] : Ranges_) {
+    //     if (Other.getRangeConst(Val) != getRangeConst(Val)) {
+    //         return false;
+    //     }
+    // }
+
+    // for (const auto& [Val, Range] : Other.Ranges_) {
+    //     if (Other.getRangeConst(Val) != getRangeConst(Val)) {
+    //         return false;
+    //     }
+    // }
+    return Ranges_ == Other.Ranges_;
 }
 
-IntervalAnalysis::IntervalAnalysis(const IntervalAnalysis& Other)
-    : Ranges_(Other.Ranges_.size())
-{
-    std::unordered_map<const SingleFact*, std::shared_ptr<SingleFact>>
-        ClonedRanges;
-    for (const auto& [Val, Range] : Other.Ranges_) {
-        if (const auto Clone = ClonedRanges.find(Range.get());
-            Clone != ClonedRanges.end()) {
-            Ranges_[Val] = Clone->second;
-        } else {
-            const auto NewRange = std::make_shared<SingleFact>(*Range);
-            Ranges_[Val] = NewRange;
-            ClonedRanges[Range.get()] = NewRange;
-        }
-    }
-}
+IntervalAnalysis::IntervalAnalysis(const IntervalAnalysis& Other) = default;
+//     : Ranges_(Other.Ranges_.size()),
+//       DT_(Other.DT_),
+//       Scopes_(Other.Scopes_),
+//       CanonicalValues_(Other.CanonicalValues_)
 
-IntervalAnalysis& IntervalAnalysis::operator=(const IntervalAnalysis& Other)
-{
-    auto Tmp = Other;
-    std::swap(Ranges_, Tmp.Ranges_);
-    return *this;
-}
+// {
+// }
+
+IntervalAnalysis& IntervalAnalysis::operator=(const IntervalAnalysis& Other) =
+    default;
+// {
+//     auto Tmp = Other;
+//     std::swap(Ranges_, Tmp.Ranges_);
+//     std::swap(Scopes_, Tmp.Scopes_);
+//     std::swap(CanonicalValues_, Tmp.CanonicalValues_);
+//     return *this;
+// }
 
 TransferRet IntervalAnalysis::transferAlloca(
     const llvm::AllocaInst* Alloca) const
 {
     auto Res = *this;
-    Res.Ranges_[static_cast<const Value*>(Alloca)] =
-        std::make_shared<SingleFact>();
+    if (!Alloca->getAllocatedType()->isIntegerTy()) {
+        return Res;
+    }
+    Res.putRange(Alloca, SingleFact::makeBottom());
     return Res;
 }
 
@@ -101,8 +215,7 @@ TransferRet IntervalAnalysis::transferAlloca(
  * @param V
  * @return RangeAnalysis::SingleFact&
  */
-std::shared_ptr<IntervalAnalysis::SingleFact> IntervalAnalysis::getRange(
-    const Value* V)
+IntervalAnalysis::SingleFact& IntervalAnalysis::getRange(const Value* V)
 {
     if (const auto Int = dyn_cast<ConstantInt>(V); Int != nullptr) {
         SmallString<256> IntAsStr;
@@ -110,18 +223,39 @@ std::shared_ptr<IntervalAnalysis::SingleFact> IntervalAnalysis::getRange(
         const auto NewRange = IntRange(bigint(IntAsStr.str().str()));
 
         if (Ranges_.contains(V)) {
-            *Ranges_.at(V) = SingleFact(NewRange);
+            Ranges_.at(V) = SingleFact(NewRange);
         } else {
-            Ranges_.emplace(V, std::make_shared<SingleFact>(NewRange));
+            Ranges_.emplace(V, NewRange);
         }
         return Ranges_.at(V);
-    } else if (Ranges_.contains(V)) {
-        return Ranges_.at(V);
+    } else if (contains(V)) {
+        return Ranges_.at(getCanonicalValue(V));
     } else {
-        Ranges_.emplace(V,
-                        std::make_shared<SingleFact>(SingleFact::makeBottom()));
+        Ranges_.emplace(V, SingleFact::makeTop());
         return Ranges_[V];
     }
+}
+
+IntervalAnalysis::SingleFact IntervalAnalysis::getRangeConst(
+    const llvm::Value* V) const
+{
+    if (const auto Int = dyn_cast<ConstantInt>(V); Int != nullptr) {
+        SmallString<256> IntAsStr;
+        Int->getValue().toString(IntAsStr, 10, true);
+        const auto NewRange = IntRange(bigint(IntAsStr.str().str()));
+        return SingleFact(NewRange);
+    } else if (contains(V)) {
+        return Ranges_.at(getCanonicalValue(V));
+    } else {
+        return SingleFact::makeTop();
+    }
+}
+
+void IntervalAnalysis::putRange(const Value* V, const SingleFact& Fact)
+{
+    Ranges_[getCanonicalValue(V)] = Fact;
+    // Ranges_[V] = Fact;
+    // CanonicalValues_[V] = getCanonicalValue(V);
 }
 
 // NOLINTNEXTLINE(readability-function-size)
@@ -131,72 +265,80 @@ TransferRet IntervalAnalysis::transferBinOp(const BinaryOperator* BinOp) const
         return *this;
     }
     auto Res = *this;
-    const auto LHS = Res.getRange(BinOp->getOperand(0));
-    const auto RHS = Res.getRange(BinOp->getOperand(1));
+    const auto& LHS = Res.getRange(BinOp->getOperand(0));
+    const auto& RHS = Res.getRange(BinOp->getOperand(1));
     const auto BitWidth = BinOp->getType()->getIntegerBitWidth();
     switch (BinOp->getOpcode()) {
         case Instruction::Add:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS,
-                [](const auto& L, const auto& R) { return L + R; }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L + R;
+                                    }));
             break;
         case Instruction::Mul:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS,
-                [](const auto& L, const auto& R) { return L * R; }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L * R;
+                                    }));
             break;
         case Instruction::Sub:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS,
-                [](const auto& L, const auto& R) { return L - R; }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L - R;
+                                    }));
             break;
         case Instruction::SDiv:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(
-                SingleFact::meet(*LHS, *RHS, [](const auto& L, const auto& R) {
+            Res.putRange(
+                BinOp,
+                SingleFact::meet(LHS, RHS, [](const auto& L, const auto& R) {
                     return L / R;
                 }).apply([BitWidth](const auto& R) {
                     return R.toSigned(BitWidth);
                 }));
             break;
         case Instruction::UDiv:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(
-                SingleFact::meet(*LHS, *RHS, [](const auto& L, const auto& R) {
+            Res.putRange(
+                BinOp,
+                SingleFact::meet(LHS, RHS, [](const auto& L, const auto& R) {
                     return L / R;
                 }).apply([BitWidth](const auto& R) {
                     return R.toUnsigned(BitWidth);
                 }));
             break;
         case Instruction::URem:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(
-                SingleFact::meet(*LHS, *RHS, [](const auto& L, const auto& R) {
-                    return L.unsignedRemainder(R);
-                }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L.unsignedRemainder(R);
+                                    }));
             break;
         case Instruction::SRem:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS,
-                [](const auto& L, const auto& R) { return L.remainder(R); }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L.remainder(R);
+                                    }));
             break;
         case Instruction::Shl:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS,
-                [](const auto& L, const auto& R) { return L << R; }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L << R;
+                                    }));
             break;
         case Instruction::LShr:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(SingleFact::meet(
-                *LHS, *RHS, [BitWidth](const auto& L, const auto& R) {
-                    return L.toUnsigned(BitWidth) /
-                           R.toUnsigned(BitWidth).exponentiate(bigint(2));
-                }));
+            Res.putRange(
+                BinOp,
+                SingleFact::meet(
+                    LHS, RHS, [BitWidth](const auto& L, const auto& R) {
+                        return L.toUnsigned(BitWidth) /
+                               R.toUnsigned(BitWidth).exponentiate(bigint(2));
+                    }));
             break;
         case Instruction::AShr:
-            Res.Ranges_[BinOp] = std::make_shared<SingleFact>(
-                SingleFact::meet(*LHS, *RHS, [](const auto& L, const auto& R) {
-                    return L / R.exponentiate(bigint(2));
-                }));
+            Res.putRange(BinOp, SingleFact::meet(
+                                    LHS, RHS, [](const auto& L, const auto& R) {
+                                        return L / R.exponentiate(bigint(2));
+                                    }));
         default:
-            Res.Ranges_[BinOp] =
-                std::make_shared<SingleFact>(SingleFact::makeBottom());
+            Res.putRange(BinOp, SingleFact::makeBottom());
             break;
     }
     return Res;
@@ -209,8 +351,6 @@ TransferRet IntervalAnalysis::transferCast(const CastInst* Cast) const
     }
     auto Res = *this;
     assert(Cast->getNumOperands() == 1);
-    const auto Arg = Res.getRange(Cast->getOperand(0));
-    Res.Ranges_[Cast] = Arg;
     return Res;
 }
 
@@ -218,12 +358,11 @@ TransferRet IntervalAnalysis::transferLoad(const LoadInst* Load) const
 {
     auto Res = *this;
     const auto Ptr = Load->getPointerOperand();
-    if (Res.Ranges_.contains(Ptr)) {
-        Res.Ranges_[Load] = Res.Ranges_.at(Ptr);
-    } else if (Load->getType()->isIntegerTy()) {
-        Res.Ranges_[Load] =
-            std::make_shared<SingleFact>(SingleFact::makeBottom());
-    }
+    // if (Res.contains(Ptr)) {
+    //     Res.putRange(Load, Res.getRange(Ptr));
+    // } else if (Load->getType()->isIntegerTy()) {
+    //     Res.putRange(Load, SingleFact::makeTop());
+    // }
     return Res;
 }
 
@@ -236,66 +375,100 @@ TransferRet IntervalAnalysis::transferLoad(const LoadInst* Load) const
  * @param OldVal the old value
  * @param NewVal the new value
  */
-void overwriteAndCheckMonotonicity(
-    std::shared_ptr<LatticeElem<IntRange>>& OldVal,
-    const std::shared_ptr<LatticeElem<IntRange>>& NewVal)
+void overwriteAndCheckMonotonicity(LatticeElem<IntRange>& OldVal,
+                                   const LatticeElem<IntRange>& NewVal)
 {
-    if (OldVal->hasValue() && NewVal->hasValue()) {
-        auto& Range = OldVal->value();
-        auto& NewRange = NewVal->value();
+    auto New = NewVal;
+    if (OldVal.hasValue() && NewVal.hasValue()) {
+        const auto& Range = OldVal.value();
+        const auto& NewRange = NewVal.value();
+        // we are overwriting a previous value
+        New.value().Mutated = true;
         if (Range.Monotonicity.isTop() && NewRange.Monotonicity.isTop() &&
             NewRange == Range) {
-            *OldVal = *NewVal;
+            OldVal = NewVal;
             return;
         } else if ((Range.Monotonicity.isTop() ||
                     Range.Monotonicity.hasValue() &&
                         Range.Monotonicity.value() == Monotonic::Increasing) &&
                    NewRange.Lower >= Range.Lower &&
                    NewRange.Upper >= Range.Upper) {
-            NewRange.Monotonicity =
+            New.value().Monotonicity =
                 LatticeElem<Monotonic>(Monotonic::Increasing);
         } else if ((Range.Monotonicity.isTop() ||
                     Range.Monotonicity.hasValue() &&
                         Range.Monotonicity.value() == Monotonic::Decreasing) &&
                    NewRange.Lower <= Range.Lower &&
                    NewRange.Upper <= Range.Upper) {
-            NewRange.Monotonicity =
+            New.value().Monotonicity =
                 LatticeElem<Monotonic>(Monotonic::Decreasing);
         }
     }
-    *OldVal = *NewVal;
+    OldVal = New;
 }
 
 TransferRet IntervalAnalysis::transferStore(const StoreInst* Store) const
 {
-    auto Res = *this;
     const auto Ptr = Store->getPointerOperand();
     const auto Val = Store->getValueOperand();
-    const auto ValRange = Res.getRange(Val);
-    if (Res.Ranges_.contains(Ptr)) {
-        overwriteAndCheckMonotonicity(Res.Ranges_[Ptr], ValRange);
+    if (!Val->getType()->isIntegerTy()) {
+        return *this;
+    }
+    auto Res = *this;
+    const auto& ValRange = Res.getRange(Val);
+    if (Res.contains(Ptr)) {
+        overwriteAndCheckMonotonicity(Res.getRange(Ptr), ValRange);
     } else {
-        Res.Ranges_[Ptr] = ValRange;
+        Res.putRange(Ptr, ValRange);
     }
     return Res;
 }
 
 TransferRet IntervalAnalysis::transferPhi(const PHINode* Phi) const
 {
+    if (!Phi->getType()->isIntegerTy()) {
+        return *this;
+    }
     auto Res = *this;
     const auto NumIncoming = Phi->getNumIncomingValues();
     if (NumIncoming == 0) {
         return Res;
     }
-    const auto PhiRange = Res.getRange(Phi->getIncomingValue(0));
+    const auto SetIsMutating = [Phi](auto& Range, auto Idx) {
+        if (Range.hasValue()) {
+            const auto Incoming = Phi->getIncomingValue(Idx);
+            for (const auto& Use : Incoming->uses()) {
+                if (Use == Phi) {
+                    // incoming node depends on this phi node -> loop
+                    // and mutation
+                    Range.value().Mutated = true;
+                    break;
+                }
+            }
+        }
+    };
+    auto& PhiRange = Res.getRange(Phi->getIncomingValue(0));
+    SetIsMutating(PhiRange, 0);
     for (unsigned int Idx = 1; Idx < NumIncoming; ++Idx) {
-        const auto IncomingRangeI = Res.getRange(Phi->getIncomingValue(Idx));
-        *PhiRange =
-            SingleFact::meet(*PhiRange, *IncomingRangeI, IntRange::meet);
+        auto& IncomingRangeI = Res.getRange(Phi->getIncomingValue(Idx));
+        SetIsMutating(IncomingRangeI, Idx);
+        PhiRange = SingleFact::meet(PhiRange, IncomingRangeI, IntRange::meet);
     }
-    Res.Ranges_[Phi] = PhiRange;
+    Res.putRange(Phi, PhiRange);
     return Res;
 }
+
+const Value* getOriginal(const Value* V)
+{
+    if (const auto Cast = dyn_cast<CastInst>(V); Cast != nullptr) {
+        return getOriginal(Cast->getOperand(0));
+    } else if (const auto Load = dyn_cast<LoadInst>(V); Load != nullptr) {
+        return Load->getPointerOperand();
+    } else {
+        return V;
+    }
+}
+
 /**
  * @brief Determines the true and false facts that can be assumed depending on
  * the evaluation of `Cmp`.
@@ -316,117 +489,205 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
     TRes.DebugNames_[LHS] = getDebugName(LHS);
     TRes.DebugNames_[RHS] = getDebugName(RHS);
     const auto BitWidth = LHS->getType()->getIntegerBitWidth();
-    const auto LHSRange = *TRes.getRange(LHS);
-    const auto RHSRange = *TRes.getRange(RHS);
+    const auto LHSRange = TRes.getRange(LHS);
+    const auto RHSRange = TRes.getRange(RHS);
+    const auto OldLHS = LHSRange;
+    const auto OldRHS = RHSRange;
+    const auto CanonicalLHS = getCanonicalValue(LHS);
+    const auto CanonicalRHS = getCanonicalValue(RHS);
     auto FRes = TRes;
     switch (Cmp->getPredicate()) {
         case ICmpInst::ICMP_EQ:
-            *TRes.Ranges_[LHS] =
-                SingleFact::join(RHSRange, LHSRange, smallerRange);
-            *TRes.Ranges_[RHS] =
-                SingleFact::join(LHSRange, RHSRange, smallerRange);
+            TRes.putRange(LHS,
+                          SingleFact::join(RHSRange, LHSRange, smallerRange));
+            TRes.putScope(LHS, Cmp, OldLHS);
+            TRes.putRange(RHS,
+                          SingleFact::join(LHSRange, RHSRange, smallerRange));
+            TRes.putScope(RHS, Cmp, OldRHS);
             break;
         case ICmpInst::ICMP_NE:
-            *FRes.Ranges_[LHS] =
-                SingleFact::join(RHSRange, LHSRange, smallerRange);
-            *FRes.Ranges_[RHS] =
-                SingleFact::join(LHSRange, RHSRange, smallerRange);
+            FRes.putRange(LHS,
+                          SingleFact::join(RHSRange, LHSRange, smallerRange));
+            FRes.putScope(LHS, Cmp, OldRHS);
+            FRes.putRange(LHS,
+                          SingleFact::join(LHSRange, RHSRange, smallerRange));
+            FRes.putScope(RHS, Cmp, OldRHS);
             break;
         case ICmpInst::ICMP_SLT:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGT);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLE);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLT));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGE));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGT));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLE));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_ULT:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGT);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULE);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULT));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGE));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGT));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULE));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_SGT:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLT);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGE);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGT));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLE));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLT));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGE));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_UGT:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULT);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGE);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGT));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULE));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULT));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGE));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_SLE:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGE);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLT);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLE));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGT));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGE));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLT));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_ULE:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGE);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULT);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULE));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGT));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGE));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULT));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_SGE:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SGE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SLE);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_SLT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_SGT);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGE));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLT));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SLE));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_SGT));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         case ICmpInst::ICMP_UGE:
-            *TRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_UGE);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *TRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_ULE);
-            *FRes.Ranges_[LHS] = adjustForCondition(
-                LHSRange, RHSRange, BitWidth, ICmpInst::ICMP_ULT);
-            // NOLINTNEXTLINE(readability-suspicious-call-argument)
-            *FRes.Ranges_[RHS] = adjustForCondition(
-                RHSRange, LHSRange, BitWidth, ICmpInst::ICMP_UGT);
+            if (isMoreBounded(RHSRange, LHSRange)) {
+                TRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGE));
+                TRes.putScope(LHS, Cmp, OldLHS);
+                FRes.putRange(LHS,
+                              adjustForCondition(LHSRange, RHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULT));
+                FRes.putScope(LHS, Cmp, OldLHS);
+            }
+            if (isMoreBounded(LHSRange, RHSRange)) {
+                TRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_ULE));
+                TRes.putScope(RHS, Cmp, OldRHS);
+                FRes.putRange(RHS,
+                              adjustForCondition(RHSRange, LHSRange, BitWidth,
+                                                 ICmpInst::ICMP_UGT));
+                FRes.putScope(RHS, Cmp, OldRHS);
+            }
             break;
         default:
             break;
@@ -477,8 +738,47 @@ TransferRet IntervalAnalysis::transfer(
 
 std::optional<IntRange> IntervalAnalysis::getValRange(const Value* V) const
 {
-    if (Ranges_.contains(V) && Ranges_.at(V)->hasValue()) {
-        return Ranges_.at(V)->value();
+    if (contains(V)) {
+        return getRangeConst(V).intoOptional();
     }
     return {};
+}
+
+llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
+                              const IntervalAnalysis& Analysis)
+{
+    Stream << "{";
+    for (const auto& [Val, Range] : Analysis.Ranges_) {
+        if (Range.isTop() || dyn_cast<ConstantInt>(Val) != nullptr) {
+            continue;
+        }
+        if (Analysis.DebugNames_.contains(Val)) {
+            Stream << Analysis.DebugNames_.at(Val) << ": ";
+        } else {
+            std::string Name;
+            raw_string_ostream NameStream(Name);
+            Val->printAsOperand(NameStream, false);
+            Stream << Name << ": ";
+        }
+        if (Range.hasValue()) {
+            Stream << Range.value();
+        } else if (Range.isBottom()) {
+            Stream << "_";
+        }
+        Stream << ", ";
+    }
+    Stream << "}";
+    return Stream;
+}
+
+IntervalAnalysis::IntervalAnalysis(const llvm::Function& F,
+                                   const llvm::DominatorTree& DT)
+    : DT_(DT)
+{
+    for (const auto& Arg : F.args()) {
+        if (Arg.getType()->isIntegerTy()) {
+            putRange(&Arg, SingleFact::makeBottom());
+            DebugNames_[&Arg] = getDebugName(&Arg);
+        }
+    }
 }

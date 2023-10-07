@@ -1,12 +1,15 @@
 #include <llvm-17/llvm/Analysis/CGSCCPassManager.h>
 #include <llvm-17/llvm/Analysis/LazyValueInfo.h>
 #include <llvm-17/llvm/Analysis/ScalarEvolution.h>
+#include <llvm-17/llvm/IR/Dominators.h>
 #include <llvm-17/llvm/IR/IRBuilder.h>
 #include <llvm-17/llvm/IR/Instruction.h>
 #include <llvm-17/llvm/IR/PassManager.h>
 #include <llvm-17/llvm/Pass.h>
 #include <llvm-17/llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/LazyValueInfo.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
@@ -17,6 +20,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "IntervalAnalysis.hpp"
 #include "NullAbstractInterpretation.hpp"
 #include "df/DataFlow.hpp"
 
@@ -139,8 +143,15 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
             AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
         auto Violation = false;
         for (auto& F : M) {
+            const auto Name = F.getName();
+            if (F.getName().starts_with("llvm.dbg.") ||
+                F.getInstructionCount() == 0) {
+                continue;
+            }
             auto& LVA = FAM.getResult<LazyValueAnalysis>(F);
-            const auto IAResults = analyze(F, IntervalAnalysis());
+            const auto& DT = FAM.getResult<DominatorTreeAnalysis>(F);
+            const auto IAResults = analyze(F, IntervalAnalysis(F, DT));
+            analysis2Cfg(outs(), IAResults, F);
             const auto AnalysisResult =
                 analyze(F, NullAbstractInterpretation(LVA, IAResults, M));
             Violation |= checkInstSafety(F, AnalysisResult);

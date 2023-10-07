@@ -1,6 +1,7 @@
 #include "IntRange.hpp"
 
 #include <llvm-17/llvm/IR/Instructions.h>
+#include <llvm-17/llvm/Support/raw_ostream.h>
 
 #include "Bound.hpp"
 #include "df/LatticeElem.hpp"
@@ -66,6 +67,14 @@ LatticeElem<IntRange> opWhenLhsBottom(const LatticeElem<IntRange>& RHS,
             Res.Lower = bound::Bound(0);
             Res.Upper = Res.Upper;
             break;
+        case llvm::ICmpInst::ICMP_UGE:
+            Res.Lower = bound::Bound(0);
+            Res.Upper = bound::Bound::makePosInf();
+            break;
+        case llvm::ICmpInst::ICMP_UGT:
+            Res.Lower = Res.Lower + Bound(1);
+            Res.Upper = bound::Bound::makePosInf();
+            break;
         default:
             assert(false);
     }
@@ -75,6 +84,10 @@ LatticeElem<IntRange> opWhenLhsBottom(const LatticeElem<IntRange>& RHS,
 /**
  * @brief Helper function for `adjustForCondition`. This function factors out
  * repeated bottom and top handling logic.
+ *
+ * If LHS and RHS has values, then the function returns the result of `Fn(LHS,
+ * RHS)` after setting the mutated flag to temporary and setting the previous
+ * range to LHS.
  *
  * @tparam Func function type of (IntRange, IntRange) -> IntRange
  * @param LHS the lattice element for the left hand side of the comparison
@@ -103,8 +116,8 @@ LatticeElem<IntRange> adjustForConditionHelper(const LatticeElem<IntRange>& LHS,
 
 }  // namespace
 // NOLINTNEXTLINE(readability-function-*)
-LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
-                                         const LatticeElem<IntRange>& RHS,
+LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& A,
+                                         const LatticeElem<IntRange>& B,
                                          uint64_t BitWidth,
                                          llvm::ICmpInst::Predicate Cond)
 {
@@ -113,64 +126,74 @@ LatticeElem<IntRange> adjustForCondition(const LatticeElem<IntRange>& LHS,
     switch (Cond) {
         case ICmpInst::ICMP_SLT:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toSigned(BitWidth);
-                    Res.Upper = RHS.value().toSigned(BitWidth).Upper - Bound(1);
+                    Res.Upper =
+                        min(Res.Upper,
+                            RHS.value().toSigned(BitWidth).Upper - Bound(1));
                     return Res.fixLowerBound();
                 });
         case ICmpInst::ICMP_ULT:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toUnsigned(BitWidth);
                     Res.Upper =
-                        RHS.value().toUnsigned(BitWidth).Upper - Bound(1);
+                        min(Res.Upper,
+                            RHS.value().toUnsigned(BitWidth).Upper - Bound(1));
                     return Res.fixLowerBound();
                 });
         case ICmpInst::ICMP_SLE:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toSigned(BitWidth);
-                    Res.Upper = RHS.value().toSigned(BitWidth).Upper;
+                    Res.Upper =
+                        min(Res.Upper, RHS.value().toSigned(BitWidth).Upper);
                     return Res.fixLowerBound();
                 });
         case ICmpInst::ICMP_ULE:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toUnsigned(BitWidth);
-                    Res.Upper = RHS.value().toUnsigned(BitWidth).Upper;
+                    Res.Upper =
+                        min(Res.Upper, RHS.value().toUnsigned(BitWidth).Upper);
                     return Res.fixLowerBound();
                 });
         case ICmpInst::ICMP_SGE:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toSigned(BitWidth);
-                    Res.Lower = RHS.value().toSigned(BitWidth).Lower;
+                    Res.Lower =
+                        max(Res.Lower, RHS.value().toSigned(BitWidth).Lower);
                     return Res.fixUpperBound();
                 });
         case ICmpInst::ICMP_UGE:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toUnsigned(BitWidth);
-                    Res.Lower = RHS.value().toUnsigned(BitWidth).Lower;
+                    Res.Lower =
+                        max(Res.Lower, RHS.value().toUnsigned(BitWidth).Lower);
                     return Res.fixUpperBound();
                 });
         case ICmpInst::ICMP_SGT:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toSigned(BitWidth);
-                    Res.Lower = RHS.value().toSigned(BitWidth).Lower + Bound(1);
+                    Res.Lower =
+                        max(Res.Lower,
+                            RHS.value().toSigned(BitWidth).Lower + Bound(1));
                     return Res.fixUpperBound();
                 });
         case ICmpInst::ICMP_UGT:
             return adjustForConditionHelper(
-                LHS, RHS, Cond, [BitWidth](auto LHS, auto RHS) {
+                A, B, Cond, [BitWidth](auto LHS, auto RHS) {
                     auto Res = LHS.value().toUnsigned(BitWidth);
                     Res.Lower =
-                        RHS.value().toUnsigned(BitWidth).Lower + Bound(1);
+                        max(Res.Lower,
+                            RHS.value().toUnsigned(BitWidth).Lower + Bound(1));
                     return Res.fixUpperBound();
                 });
         default:
-            return LHS;
+            return A;
     }
 }
 
@@ -193,36 +216,66 @@ LatticeElem<Monotonic> monoMeet(const LatticeElem<Monotonic>& A,
         }
     });
 }
-
-IntRange IntRange::meet(const IntRange& A, const IntRange& B)
+namespace
 {
+/**
+ * @brief Set the Upper Lower Bounds of `Res` which is the meet of `A` and `B`.
+ *
+ * The idea is as follows, if a bound is not equal, then we can set it to the
+ * min or max of the two bounds. However, this does not work if we are
+ * dealing with loops. To handle this case, `A` and `B` will have a mutated
+ * flag set to `Mutation::Mutated` if they have been mutated. If the mutated
+ * value has a smaller lower bound, then make the new lower bound negative
+ * infinity because we are dealing with a loop. Likewise for the upper bound.
+ *
+ * @param Res Input/output parameter. The result of the meet of `A` and `B`.
+ * @param A The first range
+ * @param B The second range
+ * @param Mono The meeted monotonicity of `A` and `B`
+ * @return IntRange&
+ */
+IntRange setUpperLowerBounds(IntRange&& Res, const IntRange& A,
+                             const IntRange& B, std::optional<Monotonic> Mono)
+{
+    if (A.Lower != B.Lower) {
+        if (A.Mutated && A.Lower < B.Lower || B.Mutated && B.Lower < A.Lower) {
+            // If the mutated value has a smaller lower bound, then
+            // make the new lower bound negative infinity.
+            // use case: loops
+            Res.Lower = Bound::makeNegInf();
+        } else {
+            Res.Lower = min(A.Lower, B.Lower);
+        }
+    } else {
+        Res.Lower = A.Lower;
+    }
+    if (A.Upper != B.Upper) {
+        if (A.Mutated && A.Upper > B.Upper || B.Mutated && B.Upper > A.Upper) {
+            Res.Upper = Bound::makePosInf();
+        } else {
+            Res.Upper = max(A.Upper, B.Upper);
+        }
+    } else {
+        Res.Upper = A.Upper;
+    }
+    return Res;
+}
+}  // namespace
+
+LatticeElem<IntRange> IntRange::meet(const IntRange& A, const IntRange& B)
+{
+    if (A == B) {
+        return LatticeElem(A);
+    }
     // If the two values have only been increasing, then if their lower
     // bounds don't match, we can set the lower bound to the max of the two
-    // instead of `SmallEnough`. Likewise for the upper bound
+    // instead of `-inf`. Likewise for the upper bound
     IntRange Res;
     Res.Monotonicity = monoMeet(A.Monotonicity, B.Monotonicity);
     const auto Mono = Res.Monotonicity.intoOptional();
-    const auto UseNegInf =
-        !Mono.has_value() || Mono.value() == Monotonic::Decreasing;
-    const auto UsePosInf =
-        !Mono.has_value() || Mono.value() == Monotonic::Increasing;
-    Res.Lower = A.Lower == B.Lower
-                    ? A.Lower
-                    : (UseNegInf ? Bound::makeNegInf() : min(A.Lower, B.Lower));
-    Res.Upper = A.Upper == B.Upper
-                    ? A.Upper
-                    : (UsePosInf ? Bound::makePosInf() : max(A.Upper, B.Upper));
-    return Res;
-}
-
-IntRange IntRange::join(const IntRange& A, const IntRange& B)
-{
-    IntRange Res;
-    assert(A.Lower >= B.Lower && A.Upper <= B.Upper ||
-           A.Lower <= B.Lower && A.Upper >= B.Upper);
-    Res.Lower = max(A.Lower, B.Lower);
-    Res.Upper = min(A.Upper, B.Upper);
-    return Res;
+    Res = setUpperLowerBounds(std::move(Res), A, B, Mono);
+    Res.Mutated = false;
+    return LatticeElem(Res);
 }
 
 IntRange operator*(const IntRange& A, const IntRange& B)
@@ -321,10 +374,9 @@ IntRange operator<<(const IntRange& A, const IntRange& B)
 
 IntRange IntRange::toSigned(unsigned int BitWidth) const
 {
-    IntRange Res;
+    IntRange Res = *this;
     const auto A = ::toSigned(Lower, BitWidth);
     const auto B = ::toSigned(Upper, BitWidth);
-    Res.Monotonicity = Monotonicity;
     Res.Lower = min(A, B);
     Res.Upper = max(A, B);
     return Res;
@@ -332,10 +384,9 @@ IntRange IntRange::toSigned(unsigned int BitWidth) const
 
 IntRange IntRange::toUnsigned(unsigned int BitWidth) const
 {
-    IntRange Res;
+    IntRange Res = *this;
     const auto A = ::toUnsigned(Lower, BitWidth);
     const auto B = ::toUnsigned(Upper, BitWidth);
-    Res.Monotonicity = Monotonicity;
     Res.Lower = min(A, B);
     Res.Upper = max(A, B);
     return Res;
@@ -375,4 +426,20 @@ IntRange IntRange::fixUpperBound() const
         Res.Upper = Res.Lower;
     }
     return Res;
+}
+
+bound::Bound IntRange::size() const
+{
+    if (Lower.isNegInf() || Upper.isPosInf()) {
+        return bound::Bound::makePosInf();
+    }
+    return Upper - Lower;
+}
+
+llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream, const IntRange& R)
+{
+    const auto Lower = R.Lower.hasValue() ? R.Lower.value().to_str() : "-inf";
+    const auto Upper = R.Upper.hasValue() ? R.Upper.value().to_str() : "+inf";
+    Stream << "[" << Lower << ", " << Upper << "]";
+    return Stream;
 }

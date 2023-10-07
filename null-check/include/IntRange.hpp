@@ -1,5 +1,8 @@
 #pragma once
+#include <llvm-17/llvm/IR/BasicBlock.h>
+#include <llvm-17/llvm/IR/Dominators.h>
 #include <llvm-17/llvm/IR/Instructions.h>
+#include <llvm-17/llvm/Support/raw_ostream.h>
 
 #include <optional>
 
@@ -28,7 +31,10 @@ struct IntRange {
     bound::Bound Lower;
     /// The upper bound or empty optional for +inf
     bound::Bound Upper;
+    /// The monotonicity of the range
     LatticeElem<Monotonic> Monotonicity;
+    /// Whether the range has been mutated
+    bool Mutated = false;
 
     /**
      * Computes the greatest lower bound of two ranges.
@@ -36,9 +42,8 @@ struct IntRange {
      * unequal, we set that bound to be inf or -inf, for the upper and lower
      * bounds respectively.
      */
-    [[nodiscard]] static IntRange meet(const IntRange& A, const IntRange& B);
-    /** Computes the least upper bound of two ranges (range intersection) */
-    [[nodiscard]] static IntRange join(const IntRange& A, const IntRange& B);
+    [[nodiscard]] static LatticeElem<IntRange> meet(const IntRange& A,
+                                                    const IntRange& B);
     bool operator==(const IntRange& Other) const = default;
 
     /// @brief Create a range from a single integer.
@@ -104,6 +109,14 @@ struct IntRange {
      * Ex. (10, 0) -> (0, 0)
      */
     [[nodiscard]] IntRange fixLowerBound() const;
+
+    /**
+     * @brief Returns the size of the range. If the range is unbounded, returns
+     * an infinite bound.
+     *
+     * @return IntRange
+     */
+    [[nodiscard]] bound::Bound size() const;
 };
 
 [[nodiscard]] IntRange operator*(const IntRange& A, const IntRange& B);
@@ -112,9 +125,13 @@ struct IntRange {
 [[nodiscard]] IntRange operator/(const IntRange& A, const IntRange& B);
 [[nodiscard]] IntRange operator<<(const IntRange& A, const IntRange& B);
 
+llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream, const IntRange& Range);
+
 /**
  * @brief Returns the stricter (smaller distance between upper and lower bounds)
  * of the two ranges. If there is a tie, the first argument is returned.
+ *
+ * The returned range has its muteated flag set to `Mutation::Temporary`.
  *
  * @param A
  * @param B
@@ -124,16 +141,16 @@ struct IntRange {
 
 /**
  * @brief Returns a new lattice element for the integer range of `LHS` that can
- * be assumed when `LHS Cond RHS` is true. The returned lattice element will be
- * with respect to the `LHS` argument, that is if `RHS` does not have a value,
+ * be assumed when `A Cond B` is true. The returned lattice element will be
+ * with respect to the `A` argument, that is if `RHS` does not have a value,
  * the returned lattice element will be `LHS`.
  *
- * @param LHS the lattice element for the left hand side of the comparison
- * @param RHS the lattice element for the right hand side of the comparison
+ * @param A the lattice element for the left hand side of the comparison
+ * @param B the lattice element for the right hand side of the comparison
  * @param BitWidth the bit width of the operands
  * @param Cond the condition of the comparison
  * @return LatticeElem<IntRange>
  */
 [[nodiscard]] LatticeElem<IntRange> adjustForCondition(
-    const LatticeElem<IntRange>& LHS, const LatticeElem<IntRange>& RHS,
+    const LatticeElem<IntRange>& A, const LatticeElem<IntRange>& B,
     uint64_t BitWidth, llvm::ICmpInst::Predicate Cond);

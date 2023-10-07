@@ -1,6 +1,10 @@
 #pragma once
+#include <llvm-17/llvm/Analysis/LazyValueInfo.h>
+#include <llvm-17/llvm/IR/BasicBlock.h>
 #include <llvm-17/llvm/IR/Instructions.h>
+#include <llvm-17/llvm/Support/raw_ostream.h>
 
+#include <stack>
 #include <unordered_map>
 
 #include "IntRange.hpp"
@@ -25,15 +29,20 @@ class IntervalAnalysis
   public:
     using TransferRet = TransferRetType<IntervalAnalysis>;
     using SingleFact = LatticeElem<IntRange>;
+    using ScopeStack =
+        std::deque<std::pair<const llvm::Instruction*, SingleFact>>;
 
   private:
     /**
      * @brief Mapping from syntactic values to their ranges.
      * If the range is unbounded, this is represented as an empty optional.
      */
-    std::unordered_map<const llvm::Value*, std::shared_ptr<SingleFact>> Ranges_;
+    std::unordered_map<const llvm::Value*, SingleFact> Ranges_;
+    std::unordered_map<const llvm::Value*, ScopeStack> Scopes_;
 
     mutable std::unordered_map<const llvm::Value*, std::string> DebugNames_;
+
+    std::reference_wrapper<const llvm::DominatorTree> DT_;
 
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
     TransferRet transferBinOp(const llvm::BinaryOperator* BinOp) const;
@@ -46,12 +55,25 @@ class IntervalAnalysis
     std::tuple<IntervalAnalysis, IntervalAnalysis> transferCmp(
         const llvm::ICmpInst* Cmp) const;
 
-    std::shared_ptr<SingleFact> getRange(const llvm::Value* V);
+    SingleFact& getRange(const llvm::Value* V);
+    SingleFact getRangeConst(const llvm::Value* V) const;
+    void putRange(const llvm::Value* V, const SingleFact& Fact);
+    void putScope(const llvm::Value* V, const llvm::Instruction* I,
+                  const SingleFact& Fact);
+    bool contains(const llvm::Value* V) const;
+
+    friend llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
+                                         const IntervalAnalysis& Analysis);
+
+    SingleFact popScopeStack(const llvm::Value* V, const llvm::BasicBlock* BB);
+    SingleFact getTopScope(const llvm::Value* V,
+                           const llvm::BasicBlock* BB) const;
 
   public:
     /// @see Fact::meet
     static IntervalAnalysis meet(const IntervalAnalysis& A,
-                                 const IntervalAnalysis& B);
+                                 const IntervalAnalysis& B,
+                                 const llvm::BasicBlock* BB);
 
     /// @see Fact::transfer
     TransferRetType<IntervalAnalysis> transfer(
@@ -64,7 +86,7 @@ class IntervalAnalysis
 
     IntervalAnalysis& operator=(const IntervalAnalysis& Other);
     IntervalAnalysis(const IntervalAnalysis& Other);
-    IntervalAnalysis() = default;
+    IntervalAnalysis(const llvm::Function& F, const llvm::DominatorTree& DT);
     IntervalAnalysis(IntervalAnalysis&&) = default;
     IntervalAnalysis& operator=(IntervalAnalysis&&) = default;
     ~IntervalAnalysis() = default;
@@ -79,5 +101,8 @@ class IntervalAnalysis
      */
     std::optional<IntRange> getValRange(const llvm::Value* V) const;
 };
+
+llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
+                              const IntervalAnalysis& Analysis);
 
 static_assert(Fact<IntervalAnalysis>);

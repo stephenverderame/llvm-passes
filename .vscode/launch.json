@@ -77,7 +77,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/null-check/violations/BadArgc.cc",
+                "./test/null-check/passes/InfLoop.cc",
             ],
             "cwd": "${workspaceFolder}"
         }

@@ -180,7 +180,6 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
     }
-    // TODO: intrinsics and invalidating non-const pointer arguments
     return Res;
 }
 
@@ -372,7 +371,8 @@ TransferRet NullAbstractInterpretation::transfer(
 }
 
 NullAbstractInterpretation NullAbstractInterpretation::meet(
-    const NullAbstractInterpretation& A, const NullAbstractInterpretation& B)
+    const NullAbstractInterpretation& A, const NullAbstractInterpretation& B,
+    const BasicBlock*)
 {
     auto Result = A;
     std::unordered_map<const PtrAbstractValue*,
