@@ -149,9 +149,8 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
                 continue;
             }
             auto& LVA = FAM.getResult<LazyValueAnalysis>(F);
-            const auto& DT = FAM.getResult<DominatorTreeAnalysis>(F);
-            const auto IAResults = analyze(F, IntervalAnalysis(F, DT));
-            analysis2Cfg(outs(), IAResults, F);
+            const auto IAResults = analyze(F, IntervalAnalysis(F));
+            // analysis2Cfg(outs(), IAResults, F);
             const auto AnalysisResult =
                 analyze(F, NullAbstractInterpretation(LVA, IAResults, M));
             Violation |= checkInstSafety(F, AnalysisResult);

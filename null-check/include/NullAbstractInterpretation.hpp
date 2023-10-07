@@ -146,6 +146,9 @@ class NullAbstractInterpretation
 
     std::shared_ptr<llvm::DataLayout> DL_;
 
+  private:
+    // docs in src for private methods
+
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
     TransferRet transferLoad(const llvm::LoadInst* Load) const;
     TransferRet transferStore(const llvm::StoreInst* Store) const;
@@ -175,8 +178,7 @@ class NullAbstractInterpretation
   public:
     /// @see Fact::meet
     static NullAbstractInterpretation meet(const NullAbstractInterpretation& A,
-                                           const NullAbstractInterpretation& B,
-                                           const llvm::BasicBlock* BB);
+                                           const NullAbstractInterpretation& B);
 
     /// @see Fact::transfer
     TransferRetType<NullAbstractInterpretation> transfer(
@@ -199,6 +201,14 @@ class NullAbstractInterpretation
     NullAbstractInterpretation& operator=(
         const NullAbstractInterpretation& Other);
     NullAbstractInterpretation(const NullAbstractInterpretation& Other);
+    /**
+     * @brief Construct a new Null Abstract Interpretation fact that is the
+     * top of the lattice.
+     *
+     * @param LVA The lazy value analysis
+     * @param IntervalFacts The result of the interval analysis
+     * @param M The module the function we are analyzing is in
+     */
     NullAbstractInterpretation(
         llvm::LazyValueInfo& LVA,
         const DataFlowFacts<IntervalAnalysis>& IntervalFacts,

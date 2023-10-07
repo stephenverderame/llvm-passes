@@ -86,11 +86,6 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
                 Result.Data = A.Data;
             }
         }
-        // else if (!A.Data.has_value()) {
-        //     // Memory for B.Data inserted from parent call to
-        //     // NullAbstractInterpretation::meet
-        //     Result.Data = B.Data;
-        // }
     } else {
         Result.Data = {};
     }
@@ -371,8 +366,7 @@ TransferRet NullAbstractInterpretation::transfer(
 }
 
 NullAbstractInterpretation NullAbstractInterpretation::meet(
-    const NullAbstractInterpretation& A, const NullAbstractInterpretation& B,
-    const BasicBlock*)
+    const NullAbstractInterpretation& A, const NullAbstractInterpretation& B)
 {
     auto Result = A;
     std::unordered_map<const PtrAbstractValue*,

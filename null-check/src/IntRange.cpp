@@ -204,18 +204,6 @@ IntRange smallerRange(const IntRange& A, const IntRange& B)
     }
     return A;
 }
-
-LatticeElem<Monotonic> monoMeet(const LatticeElem<Monotonic>& A,
-                                const LatticeElem<Monotonic>& B)
-{
-    return LatticeElem<Monotonic>::meet(A, B, [](auto& A, auto& B) {
-        if (A == B) {
-            return LatticeElem<Monotonic>(A);
-        } else {
-            return LatticeElem<Monotonic>::makeBottom();
-        }
-    });
-}
 namespace
 {
 /**
@@ -235,7 +223,7 @@ namespace
  * @return IntRange&
  */
 IntRange setUpperLowerBounds(IntRange&& Res, const IntRange& A,
-                             const IntRange& B, std::optional<Monotonic> Mono)
+                             const IntRange& B)
 {
     if (A.Lower != B.Lower) {
         if (A.Mutated && A.Lower < B.Lower || B.Mutated && B.Lower < A.Lower) {
@@ -267,13 +255,8 @@ LatticeElem<IntRange> IntRange::meet(const IntRange& A, const IntRange& B)
     if (A == B) {
         return LatticeElem(A);
     }
-    // If the two values have only been increasing, then if their lower
-    // bounds don't match, we can set the lower bound to the max of the two
-    // instead of `-inf`. Likewise for the upper bound
     IntRange Res;
-    Res.Monotonicity = monoMeet(A.Monotonicity, B.Monotonicity);
-    const auto Mono = Res.Monotonicity.intoOptional();
-    Res = setUpperLowerBounds(std::move(Res), A, B, Mono);
+    Res = setUpperLowerBounds(std::move(Res), A, B);
     Res.Mutated = false;
     return LatticeElem(Res);
 }
@@ -281,20 +264,6 @@ LatticeElem<IntRange> IntRange::meet(const IntRange& A, const IntRange& B)
 IntRange operator*(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Monotonicity = monoMeet(A.Monotonicity, B.Monotonicity);
-    if (!Res.Monotonicity.isBottom()) {
-        if ((Res.Monotonicity.isTop() ||
-             Res.Monotonicity.value() == Monotonic::Increasing) &&
-            A.isPositive() && B.isPositive()) {
-            Res.Monotonicity = LatticeElem<Monotonic>(Monotonic::Increasing);
-        } else if ((Res.Monotonicity.isTop() ||
-                    Res.Monotonicity.value() == Monotonic::Decreasing) &&
-                   A.isNegative() && B.isNegative()) {
-            Res.Monotonicity = LatticeElem<Monotonic>(Monotonic::Decreasing);
-        } else {
-            Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
-        }
-    }
     Res.Lower = A.Lower * B.Lower;
     Res.Upper = A.Upper * B.Upper;
     return Res;
@@ -303,20 +272,6 @@ IntRange operator*(const IntRange& A, const IntRange& B)
 IntRange operator+(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Monotonicity = monoMeet(A.Monotonicity, B.Monotonicity);
-    if (!Res.Monotonicity.isBottom()) {
-        if ((Res.Monotonicity.isTop() ||
-             Res.Monotonicity.value() == Monotonic::Increasing) &&
-            A.isNonNegative() && B.isNonNegative()) {
-            Res.Monotonicity = LatticeElem<Monotonic>(Monotonic::Increasing);
-        } else if ((Res.Monotonicity.isTop() ||
-                    Res.Monotonicity.value() == Monotonic::Decreasing) &&
-                   A.isNonPositive() && B.isNonPositive()) {
-            Res.Monotonicity = LatticeElem<Monotonic>(Monotonic::Decreasing);
-        } else {
-            Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
-        }
-    }
     Res.Lower = A.Lower + B.Lower;
     Res.Upper = A.Upper + B.Upper;
     return Res;
@@ -325,7 +280,6 @@ IntRange operator+(const IntRange& A, const IntRange& B)
 IntRange operator-(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     Res.Lower = A.Lower - B.Upper;
     Res.Upper = A.Upper - B.Lower;
     return Res;
@@ -334,7 +288,6 @@ IntRange operator-(const IntRange& A, const IntRange& B)
 IntRange operator/(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     Res.Lower = A.Lower / B.Upper;
     Res.Upper = A.Upper / B.Lower;
     return Res;
@@ -343,7 +296,6 @@ IntRange operator/(const IntRange& A, const IntRange& B)
 IntRange IntRange::remainder(const IntRange& Other, bool Signed) const
 {
     IntRange Res;
-    Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     auto AbsLower = abs(Other.Lower);
     auto AbsUpper = abs(Other.Upper);
     if (AbsUpper < AbsLower) {
@@ -362,11 +314,6 @@ IntRange IntRange::remainder(const IntRange& Other, bool Signed) const
 IntRange operator<<(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Monotonicity =
-        A.Monotonicity.isTop() ||
-                A.Monotonicity == LatticeElem<Monotonic>(Monotonic::Increasing)
-            ? LatticeElem<Monotonic>(Monotonic::Increasing)
-            : LatticeElem<Monotonic>::makeBottom();
     Res.Lower = A.Lower * pow(2, B.Lower);
     Res.Upper = A.Upper * pow(2, B.Upper);
     return Res;
@@ -395,7 +342,6 @@ IntRange IntRange::toUnsigned(unsigned int BitWidth) const
 IntRange IntRange::pow(bigint&& Exponent) const
 {
     IntRange Res;
-    Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     Res.Lower = bound::pow(Lower, bound::Bound(Exponent));
     Res.Upper = bound::pow(Upper, bound::Bound(Exponent));
     return Res;
@@ -404,7 +350,6 @@ IntRange IntRange::pow(bigint&& Exponent) const
 IntRange IntRange::exponentiate(bigint&& Base) const
 {
     IntRange Res;
-    Res.Monotonicity = LatticeElem<Monotonic>::makeBottom();
     Res.Lower = bound::pow(Bound(Base), Lower);
     Res.Upper = bound::pow(Bound(Base), Upper);
     return Res;

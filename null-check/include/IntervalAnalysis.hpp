@@ -29,20 +29,18 @@ class IntervalAnalysis
   public:
     using TransferRet = TransferRetType<IntervalAnalysis>;
     using SingleFact = LatticeElem<IntRange>;
-    using ScopeStack =
-        std::deque<std::pair<const llvm::Instruction*, SingleFact>>;
 
   private:
     /**
      * @brief Mapping from syntactic values to their ranges.
-     * If the range is unbounded, this is represented as an empty optional.
      */
     std::unordered_map<const llvm::Value*, SingleFact> Ranges_;
-    std::unordered_map<const llvm::Value*, ScopeStack> Scopes_;
 
+    /** @brief String representation of values for debugging */
     mutable std::unordered_map<const llvm::Value*, std::string> DebugNames_;
 
-    std::reference_wrapper<const llvm::DominatorTree> DT_;
+  private:
+    // private function docs in source
 
     TransferRet transferAlloca(const llvm::AllocaInst* Alloca) const;
     TransferRet transferBinOp(const llvm::BinaryOperator* BinOp) const;
@@ -50,7 +48,6 @@ class IntervalAnalysis
     TransferRet transferBranch(const llvm::BranchInst* Branch,
                                const DataFlowFacts<IntervalAnalysis>&) const;
     TransferRet transferPhi(const llvm::PHINode* Phi) const;
-    TransferRet transferLoad(const llvm::LoadInst* Load) const;
     TransferRet transferStore(const llvm::StoreInst* Store) const;
     std::tuple<IntervalAnalysis, IntervalAnalysis> transferCmp(
         const llvm::ICmpInst* Cmp) const;
@@ -58,22 +55,15 @@ class IntervalAnalysis
     SingleFact& getRange(const llvm::Value* V);
     SingleFact getRangeConst(const llvm::Value* V) const;
     void putRange(const llvm::Value* V, const SingleFact& Fact);
-    void putScope(const llvm::Value* V, const llvm::Instruction* I,
-                  const SingleFact& Fact);
     bool contains(const llvm::Value* V) const;
 
     friend llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
                                          const IntervalAnalysis& Analysis);
 
-    SingleFact popScopeStack(const llvm::Value* V, const llvm::BasicBlock* BB);
-    SingleFact getTopScope(const llvm::Value* V,
-                           const llvm::BasicBlock* BB) const;
-
   public:
     /// @see Fact::meet
     static IntervalAnalysis meet(const IntervalAnalysis& A,
-                                 const IntervalAnalysis& B,
-                                 const llvm::BasicBlock* BB);
+                                 const IntervalAnalysis& B);
 
     /// @see Fact::transfer
     TransferRetType<IntervalAnalysis> transfer(
@@ -86,7 +76,14 @@ class IntervalAnalysis
 
     IntervalAnalysis& operator=(const IntervalAnalysis& Other);
     IntervalAnalysis(const IntervalAnalysis& Other);
-    IntervalAnalysis(const llvm::Function& F, const llvm::DominatorTree& DT);
+    /**
+     * @brief Construct a new Top Interval Analysis fact.
+     *
+     * Function arguments are initialized to have infinite ranges.
+     *
+     * @param F The function to analyze
+     */
+    explicit IntervalAnalysis(const llvm::Function& F);
     IntervalAnalysis(IntervalAnalysis&&) = default;
     IntervalAnalysis& operator=(IntervalAnalysis&&) = default;
     ~IntervalAnalysis() = default;
@@ -102,6 +99,16 @@ class IntervalAnalysis
     std::optional<IntRange> getValRange(const llvm::Value* V) const;
 };
 
+/**
+ * @brief Outputs a set representing all known value, range mappings.
+ * Each value will be displayed as its name in the LLVM source (ie. '%10').
+ *
+ * Bottom is represented as '_'. And values that are TOP are not displayed.
+ *
+ * @param Stream The stream to output to
+ * @param Analysis The analysis to output
+ * @return llvm::raw_ostream& The modified stream
+ */
 llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
                               const IntervalAnalysis& Analysis);
 

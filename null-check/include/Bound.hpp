@@ -11,14 +11,21 @@ namespace bound
 class Bound
 {
     enum class Inf : uint8_t { NegInf, PosInf };
+    /// Concrete value of the bound or +/-inf
     std::variant<bigint, Inf> V_;
+    /// For debugging purposes, more easily display the value of this bound
     std::string DebugVal_;
 
   public:
-    // NOLINTNEXTLINE(bugprone-unchecked-*)
-    inline auto& value() { return std::get<bigint>(V_); }
+    /**
+     * @brief Returns the value of this bound. Requires the bound is not
+     * infinite.
+     */
     // NOLINTNEXTLINE(bugprone-unchecked-*)
     inline const auto& value() const { return std::get<bigint>(V_); }
+    /**
+     * @brief Determines if this bound has a value (not infinity).
+     */
     inline bool hasValue() const { return std::holds_alternative<bigint>(V_); }
 
     friend Bound operator+(const Bound& A, const Bound& B);

@@ -52,6 +52,12 @@ bool isMoreBounded(const LatticeElem<IntRange>& A,
     // return true;
 }
 
+/**
+ * @brief Get the value which is the canonical representative of `V`. The
+ * canonical representative is the value that is used to represent `V` in the
+ * mapping from values to ranges. For example, if `V` is a load instruction, the
+ * canonical representative is the pointer operand of the load instruction.
+ */
 const llvm::Value* getCanonicalValue(const llvm::Value* V)
 {
     if (const auto Cast = dyn_cast<CastInst>(V); Cast != nullptr) {
@@ -61,80 +67,23 @@ const llvm::Value* getCanonicalValue(const llvm::Value* V)
     } else {
         return V;
     }
-    // return V;
 }
 
 /**
- * @brief Gets the version of the range of `V` that is valid at the beginning of
- * `BB`. Pops the scope stack until the top of the stack dominates `BB`. Returns
- * this new top.
- *
- * @param SF the fact to get the scope of
- * @param BB the basic block to get the scope for
- * @return std::shared_ptr<IntervalAnalysis::SingleFact>
- */
-IntervalAnalysis::SingleFact IntervalAnalysis::popScopeStack(
-    const Value* V, const llvm::BasicBlock* BB)
-{
-    if (!Scopes_.contains(V)) {
-        return getRange(V);
-    }
-    auto& Scopes = Scopes_.at(V);
-    auto LastPtr = std::cref(getRange(V));
-    while (!Scopes.empty()) {
-        const auto& [Inst, Fact] = Scopes.front();
-        if (DT_.get().dominates(Inst, BB)) {
-            return LastPtr.get();
-        }
-        LastPtr = std::cref(Fact);
-        Scopes.pop_front();
-    }
-    return LastPtr.get();
-}
-
-void IntervalAnalysis::putScope(const Value* V, const Instruction* I,
-                                const SingleFact& Fact)
-{
-    V = getCanonicalValue(V);
-    if (!Scopes_.contains(V)) {
-        Scopes_.emplace(V, ScopeStack());
-    }
-    Scopes_.at(V).emplace_back(I, Fact);
-}
-
-/**
- * @brief Gets the version of the range of `V` that is valid at the beginning of
- * `BB`.
+ * @brief Determines if we have a range for `V` in the mapping from values to
+ * ranges.
  *
  * @param V
- * @param BB
- * @return IntervalAnalysis::SingleFact
+ * @return true
+ * @return false
  */
-IntervalAnalysis::SingleFact IntervalAnalysis::getTopScope(
-    const llvm::Value* V, const llvm::BasicBlock* BB) const
-{
-    if (!Scopes_.contains(V)) {
-        return getRangeConst(V);
-    }
-    auto& Scopes = Scopes_.at(V);
-    auto LastPtr = getRangeConst(V);
-    for (const auto& [Inst, Fact] : Scopes) {
-        if (DT_.get().dominates(Inst, BB)) {
-            return LastPtr;
-        }
-        LastPtr = Fact;
-    }
-    return LastPtr;
-}
-
 bool IntervalAnalysis::contains(const llvm::Value* V) const
 {
     return Ranges_.contains(getCanonicalValue(V));
 }
 
 IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
-                                        const IntervalAnalysis& B,
-                                        const BasicBlock* BB)
+                                        const IntervalAnalysis& B)
 {
     auto Res = A;
     for (const auto& [Val, Range] : B.Ranges_) {
@@ -144,13 +93,6 @@ IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
                                       B.getRangeConst(Val), IntRange::meet));
         } else {
             Res.putRange(Val, Range);
-        }
-    }
-    for (const auto& [Val, Scope] : B.Scopes_) {
-        if (Res.Scopes_.contains(Val)) {
-            // assert(Res.Scopes_.at(Val) == Scope);
-        } else {
-            Res.Scopes_.emplace(Val, Scope);
         }
     }
     for (const auto& [Val, Name] : B.DebugNames_) {
@@ -163,38 +105,13 @@ IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
 
 bool IntervalAnalysis::operator==(const IntervalAnalysis& Other) const
 {
-    // for (const auto& [Val, Range] : Ranges_) {
-    //     if (Other.getRangeConst(Val) != getRangeConst(Val)) {
-    //         return false;
-    //     }
-    // }
-
-    // for (const auto& [Val, Range] : Other.Ranges_) {
-    //     if (Other.getRangeConst(Val) != getRangeConst(Val)) {
-    //         return false;
-    //     }
-    // }
     return Ranges_ == Other.Ranges_;
 }
 
 IntervalAnalysis::IntervalAnalysis(const IntervalAnalysis& Other) = default;
-//     : Ranges_(Other.Ranges_.size()),
-//       DT_(Other.DT_),
-//       Scopes_(Other.Scopes_),
-//       CanonicalValues_(Other.CanonicalValues_)
-
-// {
-// }
 
 IntervalAnalysis& IntervalAnalysis::operator=(const IntervalAnalysis& Other) =
     default;
-// {
-//     auto Tmp = Other;
-//     std::swap(Ranges_, Tmp.Ranges_);
-//     std::swap(Scopes_, Tmp.Scopes_);
-//     std::swap(CanonicalValues_, Tmp.CanonicalValues_);
-//     return *this;
-// }
 
 TransferRet IntervalAnalysis::transferAlloca(
     const llvm::AllocaInst* Alloca) const
@@ -208,12 +125,12 @@ TransferRet IntervalAnalysis::transferAlloca(
 }
 
 /**
- * @brief Gets a range for a particular value.
- * If the value is not in the map, it is added with a bottom range.
+ * @brief Gets a reference to a range for a particular value.
+ * If the value is not in the map, it is added with a top range.
  * If the value is a constant, it is added with a range equal to the constant.
  *
- * @param V
- * @return RangeAnalysis::SingleFact&
+ * @param V the value to get the range for
+ * @return refereence to the range for `V`
  */
 IntervalAnalysis::SingleFact& IntervalAnalysis::getRange(const Value* V)
 {
@@ -236,6 +153,13 @@ IntervalAnalysis::SingleFact& IntervalAnalysis::getRange(const Value* V)
     }
 }
 
+/**
+ * @brief Gets a range for `V`, without mutating the IntervalAnalysis.
+ * If `V` is not in the map, returns a new Range that is either top, or in the
+ * case `V` is a constant, a constant range.
+ *
+ * @param V the value to get the range for
+ */
 IntervalAnalysis::SingleFact IntervalAnalysis::getRangeConst(
     const llvm::Value* V) const
 {
@@ -251,11 +175,16 @@ IntervalAnalysis::SingleFact IntervalAnalysis::getRangeConst(
     }
 }
 
+/**
+ * @brief Inserts `Fact` into the mapping from values to ranges, for the
+ * canonical value of `V`.
+ *
+ * @param V the value to insert the range for
+ * @param Fact the range to insert
+ */
 void IntervalAnalysis::putRange(const Value* V, const SingleFact& Fact)
 {
     Ranges_[getCanonicalValue(V)] = Fact;
-    // Ranges_[V] = Fact;
-    // CanonicalValues_[V] = getCanonicalValue(V);
 }
 
 // NOLINTNEXTLINE(readability-function-size)
@@ -354,23 +283,9 @@ TransferRet IntervalAnalysis::transferCast(const CastInst* Cast) const
     return Res;
 }
 
-TransferRet IntervalAnalysis::transferLoad(const LoadInst* Load) const
-{
-    auto Res = *this;
-    const auto Ptr = Load->getPointerOperand();
-    // if (Res.contains(Ptr)) {
-    //     Res.putRange(Load, Res.getRange(Ptr));
-    // } else if (Load->getType()->isIntegerTy()) {
-    //     Res.putRange(Load, SingleFact::makeTop());
-    // }
-    return Res;
-}
-
 /**
- * @brief Updates the value of `OldVal` with `NewVal` for a store. If the new
- * value is monotonically greater than the old value, and the old value was
- * monotonically increasing or top, the new value is monotonically increasing.
- * Likewise for decreasing.
+ * @brief Updates the value of `OldVal` with `NewVal` for a store. Sets the
+ * mutated flag on `OldVal`
  *
  * @param OldVal the old value
  * @param NewVal the new value
@@ -384,25 +299,6 @@ void overwriteAndCheckMonotonicity(LatticeElem<IntRange>& OldVal,
         const auto& NewRange = NewVal.value();
         // we are overwriting a previous value
         New.value().Mutated = true;
-        if (Range.Monotonicity.isTop() && NewRange.Monotonicity.isTop() &&
-            NewRange == Range) {
-            OldVal = NewVal;
-            return;
-        } else if ((Range.Monotonicity.isTop() ||
-                    Range.Monotonicity.hasValue() &&
-                        Range.Monotonicity.value() == Monotonic::Increasing) &&
-                   NewRange.Lower >= Range.Lower &&
-                   NewRange.Upper >= Range.Upper) {
-            New.value().Monotonicity =
-                LatticeElem<Monotonic>(Monotonic::Increasing);
-        } else if ((Range.Monotonicity.isTop() ||
-                    Range.Monotonicity.hasValue() &&
-                        Range.Monotonicity.value() == Monotonic::Decreasing) &&
-                   NewRange.Lower <= Range.Lower &&
-                   NewRange.Upper <= Range.Upper) {
-            New.value().Monotonicity =
-                LatticeElem<Monotonic>(Monotonic::Decreasing);
-        }
     }
     OldVal = New;
 }
@@ -491,8 +387,7 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
     const auto BitWidth = LHS->getType()->getIntegerBitWidth();
     const auto LHSRange = TRes.getRange(LHS);
     const auto RHSRange = TRes.getRange(RHS);
-    const auto OldLHS = LHSRange;
-    const auto OldRHS = RHSRange;
+    // Canonical values for ease of debugging
     const auto CanonicalLHS = getCanonicalValue(LHS);
     const auto CanonicalRHS = getCanonicalValue(RHS);
     auto FRes = TRes;
@@ -500,39 +395,31 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
         case ICmpInst::ICMP_EQ:
             TRes.putRange(LHS,
                           SingleFact::join(RHSRange, LHSRange, smallerRange));
-            TRes.putScope(LHS, Cmp, OldLHS);
             TRes.putRange(RHS,
                           SingleFact::join(LHSRange, RHSRange, smallerRange));
-            TRes.putScope(RHS, Cmp, OldRHS);
             break;
         case ICmpInst::ICMP_NE:
             FRes.putRange(LHS,
                           SingleFact::join(RHSRange, LHSRange, smallerRange));
-            FRes.putScope(LHS, Cmp, OldRHS);
             FRes.putRange(LHS,
                           SingleFact::join(LHSRange, RHSRange, smallerRange));
-            FRes.putScope(RHS, Cmp, OldRHS);
             break;
         case ICmpInst::ICMP_SLT:
             if (isMoreBounded(RHSRange, LHSRange)) {
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLT));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGE));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGT));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLE));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_ULT:
@@ -540,21 +427,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULT));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGE));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGT));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULE));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_SGT:
@@ -562,21 +445,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGT));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLE));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLT));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGE));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_UGT:
@@ -584,21 +463,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGT));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULE));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULT));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGE));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_SLE:
@@ -606,21 +481,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLE));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGT));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGE));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLT));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_ULE:
@@ -628,21 +499,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULE));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGT));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGE));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULT));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_SGE:
@@ -650,21 +517,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGE));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLT));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SLE));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_SGT));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         case ICmpInst::ICMP_UGE:
@@ -672,21 +535,17 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                 TRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGE));
-                TRes.putScope(LHS, Cmp, OldLHS);
                 FRes.putRange(LHS,
                               adjustForCondition(LHSRange, RHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULT));
-                FRes.putScope(LHS, Cmp, OldLHS);
             }
             if (isMoreBounded(LHSRange, RHSRange)) {
                 TRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_ULE));
-                TRes.putScope(RHS, Cmp, OldRHS);
                 FRes.putRange(RHS,
                               adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                  ICmpInst::ICMP_UGT));
-                FRes.putScope(RHS, Cmp, OldRHS);
             }
             break;
         default:
@@ -723,8 +582,6 @@ TransferRet IntervalAnalysis::transfer(
         return transferBinOp(BinOp);
     } else if (const auto Cast = dyn_cast<CastInst>(&I); Cast != nullptr) {
         return transferCast(Cast);
-    } else if (const auto Load = dyn_cast<LoadInst>(&I); Load != nullptr) {
-        return transferLoad(Load);
     } else if (const auto Store = dyn_cast<StoreInst>(&I); Store != nullptr) {
         return transferStore(Store);
     } else if (const auto Phi = dyn_cast<PHINode>(&I); Phi != nullptr) {
@@ -733,6 +590,8 @@ TransferRet IntervalAnalysis::transfer(
                Branch != nullptr) {
         return transferBranch(Branch, Facts);
     }
+    // we don't need to handle loads because `getCanonicalValue` will handle
+    // that
     return *this;
 }
 
@@ -748,7 +607,19 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
                               const IntervalAnalysis& Analysis)
 {
     Stream << "{";
+    std::unordered_map<std::string, const llvm::Value*> RangeStrs;
     for (const auto& [Val, Range] : Analysis.Ranges_) {
+        if (Analysis.DebugNames_.contains(Val)) {
+            RangeStrs.emplace(Analysis.DebugNames_.at(Val), Val);
+        } else {
+            std::string Name;
+            raw_string_ostream NameStream(Name);
+            Val->printAsOperand(NameStream, false);
+            RangeStrs.emplace(Name, Val);
+        }
+    }
+    for (const auto& [Name, Val] : RangeStrs) {
+        const auto& Range = Analysis.Ranges_.at(Val);
         if (Range.isTop() || dyn_cast<ConstantInt>(Val) != nullptr) {
             continue;
         }
@@ -771,9 +642,7 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
     return Stream;
 }
 
-IntervalAnalysis::IntervalAnalysis(const llvm::Function& F,
-                                   const llvm::DominatorTree& DT)
-    : DT_(DT)
+IntervalAnalysis::IntervalAnalysis(const llvm::Function& F)
 {
     for (const auto& Arg : F.args()) {
         if (Arg.getType()->isIntegerTy()) {

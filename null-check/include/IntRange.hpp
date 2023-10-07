@@ -31,8 +31,6 @@ struct IntRange {
     bound::Bound Lower;
     /// The upper bound or empty optional for +inf
     bound::Bound Upper;
-    /// The monotonicity of the range
-    LatticeElem<Monotonic> Monotonicity;
     /// Whether the range has been mutated
     bool Mutated = false;
 
@@ -50,8 +48,7 @@ struct IntRange {
     explicit IntRange(bigint&& I) : Lower(I), Upper(I) {}
     IntRange()
         : Lower(bound::Bound::makeNegInf()),
-          Upper(bound::Bound::makePosInf()),
-          Monotonicity(){};
+          Upper(bound::Bound::makePosInf()){};
     IntRange(bigint&& Lower, bigint&& Upper)
         : Lower(std::move(Lower)), Upper(std::move(Upper))
     {
@@ -125,13 +122,19 @@ struct IntRange {
 [[nodiscard]] IntRange operator/(const IntRange& A, const IntRange& B);
 [[nodiscard]] IntRange operator<<(const IntRange& A, const IntRange& B);
 
+/**
+ * @brief Prints the range to the given stream as `[Lower, Upper]`
+ *
+ * @param Stream The stream to print to
+ * @param Range The range to print
+ * @return llvm::raw_ostream& The modified stream
+ */
 llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream, const IntRange& Range);
 
 /**
  * @brief Returns the stricter (smaller distance between upper and lower bounds)
  * of the two ranges. If there is a tie, the first argument is returned.
  *
- * The returned range has its muteated flag set to `Mutation::Temporary`.
  *
  * @param A
  * @param B

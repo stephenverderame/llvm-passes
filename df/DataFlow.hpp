@@ -90,10 +90,9 @@ concept Fact = requires(const T& t) {
      * @brief Greatest lower bound of two facts.
      * @param A The first fact
      * @param B The second fact
-     * @param BB The basic block that the facts are being met right before
      */
     {
-        T::meet(t, t, std::declval<const llvm::BasicBlock*>())
+        T::meet(t, t)
     } -> std::convertible_to<T>;
 
     /**
@@ -185,9 +184,8 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
     if (std::holds_alternative<F>(Out)) {
         for (const auto& Succ : Dir::successors(BB)) {
             const auto& SuccFirstInst = *Dir::begin(*Succ);
-            Facts.InstructionInFacts.at(&SuccFirstInst) =
-                F::meet(Facts.InstructionInFacts.at(&SuccFirstInst),
-                        std::get<F>(Out), Succ);
+            Facts.InstructionInFacts.at(&SuccFirstInst) = F::meet(
+                Facts.InstructionInFacts.at(&SuccFirstInst), std::get<F>(Out));
         }
     } else {
         const auto& OutMap = std::get<0>(Out);
@@ -196,7 +194,7 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
             const auto& SuccFirstInst = *Dir::begin(SuccBB);
             Facts.InstructionInFacts.at(&SuccFirstInst) =
                 F::meet(Facts.InstructionInFacts.at(&SuccFirstInst),
-                        OutMap.at(&SuccBB), Succ);
+                        OutMap.at(&SuccBB));
         }
     }
     return Facts;
