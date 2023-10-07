@@ -148,4 +148,34 @@ bool operator<=(const Bound& A, const Bound& B)
         return false;
     }
 }
+
+Bound operator%(const Bound& A, const Bound& B)
+{
+    if (!B.hasValue() || !A.hasValue()) {
+        return A;
+    }
+    return A - (A / B) * B;
+}
+
+Bound min(const std::initializer_list<Bound>& Bounds)
+{
+    auto It = Bounds.begin();
+    Bound Min = *It;
+    while (It != Bounds.end()) {
+        Min = min(Min, *It);
+        ++It;
+    }
+    return Min;
+}
+
+Bound max(const std::initializer_list<Bound>& Bounds)
+{
+    auto It = Bounds.begin();
+    Bound Max = *It;
+    while (It != Bounds.end()) {
+        Max = max(Max, *It);
+        ++It;
+    }
+    return Max;
+}
 }  // namespace bound

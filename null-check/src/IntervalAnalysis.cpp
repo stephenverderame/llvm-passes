@@ -37,19 +37,10 @@ bool isMoreBounded(const LatticeElem<IntRange>& A,
     static bool Test = true;
     auto T = Test;
     Test = !Test;
+    // this flips back and forth to always return false
+    // for reverse condition, ie if the condition is
+    // A < B, it won't add facts about B, just A
     return T;
-    // if (B.isBottom()) {
-    //     return true;
-    // }
-    // if (A.isBottom()) {
-    //     // B is not bottom here
-    //     return false;
-    // }
-    // if (A.hasValue() && B.hasValue()) {
-    //     return A.value().size() <= B.value().size();
-    // }
-    // // A and B are top
-    // return true;
 }
 
 /**
@@ -570,6 +561,25 @@ TransferRet IntervalAnalysis::transferBranch(
         });
 }
 
+TransferRet IntervalAnalysis::transferCall(const CallInst* Call) const
+{
+    auto Res = *this;
+    if (!Call->getType()->isIntegerTy()) {
+        return Res;
+    }
+    const auto Called = Call->getCalledFunction();
+    if (Called != nullptr) {
+        const auto Name = Called->getName();
+        if (Name == "rand") {
+            Res.putRange(Call,
+                         SingleFact(IntRange(bigint(0), bigint(RAND_MAX))));
+        } else {
+            Res.putRange(Call, SingleFact::makeBottom());
+        }
+    }
+    return Res;
+}
+
 TransferRet IntervalAnalysis::transfer(
     const llvm::Instruction& I,
     const DataFlowFacts<IntervalAnalysis>& Facts) const
@@ -589,6 +599,8 @@ TransferRet IntervalAnalysis::transfer(
     } else if (const auto Branch = dyn_cast<BranchInst>(&I);
                Branch != nullptr) {
         return transferBranch(Branch, Facts);
+    } else if (const auto Call = dyn_cast<CallInst>(&I); Call != nullptr) {
+        return transferCall(Call);
     }
     // we don't need to handle loads because `getCanonicalValue` will handle
     // that
@@ -623,7 +635,9 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
         if (Range.isTop() || dyn_cast<ConstantInt>(Val) != nullptr) {
             continue;
         }
-        if (Analysis.DebugNames_.contains(Val)) {
+        if (!Val->getName().empty()) {
+            Stream << Val->getName() << ": ";
+        } else if (Analysis.DebugNames_.contains(Val)) {
             Stream << Analysis.DebugNames_.at(Val) << ": ";
         } else {
             std::string Name;

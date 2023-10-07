@@ -49,6 +49,7 @@ class IntervalAnalysis
                                const DataFlowFacts<IntervalAnalysis>&) const;
     TransferRet transferPhi(const llvm::PHINode* Phi) const;
     TransferRet transferStore(const llvm::StoreInst* Store) const;
+    TransferRet transferCall(const llvm::CallInst* Call) const;
     std::tuple<IntervalAnalysis, IntervalAnalysis> transferCmp(
         const llvm::ICmpInst* Cmp) const;
 

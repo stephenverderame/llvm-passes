@@ -1,7 +1,5 @@
-#include <llvm-17/llvm/Analysis/CGSCCPassManager.h>
 #include <llvm-17/llvm/Analysis/LazyValueInfo.h>
 #include <llvm-17/llvm/Analysis/ScalarEvolution.h>
-#include <llvm-17/llvm/IR/Dominators.h>
 #include <llvm-17/llvm/IR/IRBuilder.h>
 #include <llvm-17/llvm/IR/Instruction.h>
 #include <llvm-17/llvm/IR/PassManager.h>
@@ -152,7 +150,7 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
             const auto IAResults = analyze(F, IntervalAnalysis(F));
             // analysis2Cfg(outs(), IAResults, F);
             const auto AnalysisResult =
-                analyze(F, NullAbstractInterpretation(LVA, IAResults, M));
+                analyze(F, NullAbstractInterpretation(LVA, IAResults, M, F));
             Violation |= checkInstSafety(F, AnalysisResult);
         }
         if (Violation) {

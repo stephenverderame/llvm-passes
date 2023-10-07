@@ -296,17 +296,21 @@ IntRange operator/(const IntRange& A, const IntRange& B)
 IntRange IntRange::remainder(const IntRange& Other, bool Signed) const
 {
     IntRange Res;
-    auto AbsLower = abs(Other.Lower);
-    auto AbsUpper = abs(Other.Upper);
-    if (AbsUpper < AbsLower) {
-        std::swap(AbsLower, AbsUpper);
-    }
     if (!Signed) {
+        auto AbsLower = abs(Other.Lower);
+        auto AbsUpper = abs(Other.Upper);
+        if (AbsUpper < AbsLower) {
+            std::swap(AbsLower, AbsUpper);
+        }
         Res.Lower = Bound(0);
-        Res.Upper = AbsUpper;
+        Res.Upper = AbsUpper - Bound(1);
     } else {
-        Res.Lower = Bound(0) - AbsUpper;
-        Res.Upper = AbsUpper;
+        const auto LL = Lower % Other.Lower;
+        const auto LU = Lower % Other.Upper;
+        const auto UL = Upper % Other.Lower;
+        const auto UU = Upper % Other.Upper;
+        Res.Lower = min({LL, LU, UL, UU});
+        Res.Upper = max({LL, LU, UL, UU});
     }
     return Res;
 }

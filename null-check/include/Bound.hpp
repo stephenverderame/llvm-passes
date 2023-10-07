@@ -1,4 +1,5 @@
 #pragma once
+#include <initializer_list>
 #include <variant>
 
 #include "external/bigint.h"
@@ -108,6 +109,15 @@ Bound operator*(const Bound& A, const Bound& B);
 Bound operator/(const Bound& A, const Bound& B);
 
 /**
+ * @brief Computes the signed remainder of A and B. If B is +/-inf, returns A.
+ * If A is +/-inf, returns A.
+ *
+ * The signed remainder is defined as:
+ * `(A/B)*B + (A%B) == A`
+ */
+Bound operator%(const Bound& A, const Bound& B);
+
+/**
  * @brief `A ** B` if both A and B have values. If A is +/-inf, returns A. Else
  * if B is +/-inf return B
  */
@@ -120,13 +130,13 @@ Bound pow(const Bound& A, const Bound& B);
 Bound abs(const Bound& A);
 
 /**
- * @brief `min(A, B)` if both A and B have values.. If either bound is +/-inf,
+ * @brief `min(A, B)` if both A and B have values. If either bound is +/-inf,
  * returns A if A is -inf or B is +inf, otherwise returns B.
  */
 Bound min(const Bound& A, const Bound& B);
 
 /**
- * @brief `max(A, B)` if both A and B have values.. If either bound is +/-inf,
+ * @brief `max(A, B)` if both A and B have values. If either bound is +/-inf,
  * returns A if A is +inf or B is -inf, otherwise returns B.
  */
 Bound max(const Bound& A, const Bound& B);
@@ -138,20 +148,26 @@ Bound max(const Bound& A, const Bound& B);
 bool operator<(const Bound& A, const Bound& B);
 
 /**
- * @brief `A <= B` if both A and B have values.. Also true if A is -inf or B is
+ * @brief `A <= B` if both A and B have values. Also true if A is -inf or B is
  * +inf
  */
 bool operator<=(const Bound& A, const Bound& B);
 
 /**
- * @brief `A > B` if both A and B have values.. Also true if A is +inf or B is
+ * @brief `A > B` if both A and B have values. Also true if A is +inf or B is
  * -inf
  */
 bool operator>(const Bound& A, const Bound& B);
 
 /**
- * @brief `A >= B` if both A and B have values.. Also true if A is +inf or B is
+ * @brief `A >= B` if both A and B have values. Also true if A is +inf or B is
  * -inf
  */
 bool operator>=(const Bound& A, const Bound& B);
+
+/// @see min(const Bound&, const Bound&)
+Bound min(const std::initializer_list<Bound>& Bounds);
+
+/// @see max(const Bound&, const Bound&)
+Bound max(const std::initializer_list<Bound>& Bounds);
 }  // namespace bound

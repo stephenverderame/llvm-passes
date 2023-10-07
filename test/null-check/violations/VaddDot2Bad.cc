@@ -4,32 +4,36 @@
 // NOLINTBEGIN
 int main(int argc, const char** argv)
 {
-    // this isn't actually a correct program (ex. argv[0] is a filename), just a
-    // test
-    if (argc > 256 || argc < 0) {
+    if (argc > 257 || argc < 0) {
         printf("Too many arguments\n");
         return 1;
     }
-    if (argc % 2 != 0) {
-        printf("Must have even number of arguments, excluding the filename\n");
+    int arr_count = argc - 1;
+    if (arr_count % 2 != 0) {
+        printf(
+            "Must have even number of arguments(got %d), excluding the "
+            "filename\n",
+            argc);
         return 1;
     }
     int a[128];
     int b[128];
 
-    for (int i = 0; i < argc; ++i) {
+    for (int i = 1, j = 0; i < argc; ++i) {
         const auto arg = argv + i;
         if (arg) {
             int num = atoi(*arg);
-            if (i < argc / 2) {
-                a[i] = num;
-                b[i] = num;
+            if (i % 2 == 0) {
+                a[j] = num;
+                j++;
+            } else {
+                b[j] = num;
             }
         }
     }
 
     int c = 0;
-    for (int i = 0; i < argc / 2; ++i) {
+    for (int i = 0; i < arr_count / 2; ++i) {
         int d = a[i] + b[i];
         c += d * d;
     }

@@ -212,12 +212,7 @@ class NullAbstractInterpretation
     NullAbstractInterpretation(
         llvm::LazyValueInfo& LVA,
         const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
-        const llvm::Module& M)
-        : State_(),
-          DebugNames_(),
-          LVA_(LVA),
-          DL_(std::make_shared<llvm::DataLayout>(&M)),
-          IntervalFacts_(IntervalFacts){};
+        const llvm::Module& M, const llvm::Function& F);
     NullAbstractInterpretation(NullAbstractInterpretation&&) = default;
     NullAbstractInterpretation& operator=(NullAbstractInterpretation&&) =
         default;

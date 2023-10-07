@@ -175,6 +175,7 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
     }
+    // TODO: intrinsics and passing pointers as arguments
     return Res;
 }
 
@@ -238,9 +239,14 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
     bool Bottom = false;
     if (auto It = Res.State_.find(BasePtr); It != Res.State_.end()) {
         const auto& BaseAbstractVal = *It->second;
-        if (BaseAbstractVal.Size.hasValue()) {
+        if (BaseAbstractVal.Size.hasValue() ||
+            GEP->getSourceElementType()->isArrayTy()) {
             for (const auto& Idx : GEP->indices()) {
-                if (!inRange(Idx, GEP, BaseAbstractVal.Size.value())) {
+                auto Size =
+                    BaseAbstractVal.Size.hasValue()
+                        ? BaseAbstractVal.Size.value()
+                        : GEP->getSourceElementType()->getArrayNumElements();
+                if (!inRange(Idx, GEP, Size)) {
                     Bottom = true;
                     break;
                 }
@@ -467,4 +473,26 @@ NullAbstractInterpretation& NullAbstractInterpretation::operator=(
     std::swap(State_, Temp.State_);
     std::swap(DebugNames_, Temp.DebugNames_);
     return *this;
+}
+
+NullAbstractInterpretation::NullAbstractInterpretation(
+    llvm::LazyValueInfo& LVA,
+    const DataFlowFacts<IntervalAnalysis>& IntervalFacts, const llvm::Module& M,
+    const llvm::Function& F)
+    : State_(),
+      DebugNames_(),
+      LVA_(LVA),
+      DL_(std::make_shared<llvm::DataLayout>(&M)),
+      IntervalFacts_(IntervalFacts)
+{
+    for (const auto& Arg : F.args()) {
+        if (auto PtrType = dyn_cast<PointerType>(Arg.getType());
+            PtrType != nullptr) {
+            const auto NullInfo = Arg.hasAttribute(Attribute::NonNull)
+                                      ? NullState::NonNull
+                                      : NullState::MaybeNull;
+            State_.emplace(&Arg, PtrAbstractValue::make(NullInfo));
+            DebugNames_.emplace(&Arg, getDebugName(&Arg));
+        }
+    }
 }

@@ -77,7 +77,7 @@
                 "-x",
                 "c++",
                 // FILE TO DEBUG
-                "./test/null-check/passes/InfLoop.cc",
+                "./test/null-check/passes/Sort.cc",
             ],
             "cwd": "${workspaceFolder}"
         }
