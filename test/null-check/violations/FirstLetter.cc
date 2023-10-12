@@ -4,7 +4,7 @@
 // NOLINTBEGIN
 int main(int argc, const char** argv)
 {
-    if (argc > 257) {
+    if (argc > 256) {
         printf("Too many arguments\n");
         return 1;
     }

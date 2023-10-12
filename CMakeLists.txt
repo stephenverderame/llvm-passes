@@ -22,3 +22,4 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Our pass lives in this subdirectory.
 add_subdirectory(null-check)
+add_subdirectory(ive)
