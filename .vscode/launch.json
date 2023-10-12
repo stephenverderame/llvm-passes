@@ -78,7 +78,7 @@
                 "c++",
                 "-O1",
                 // FILE TO DEBUG
-                "./test/ive/Loop1.cc",
+                "./test/ive/Nested1.cc",
             ],
             "cwd": "${workspaceFolder}"
         }

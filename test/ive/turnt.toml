@@ -1,2 +1,5 @@
 # Working directory is dir of this file
-command = "clang++-17 -g {filename} -fpass-plugin=../../../build/null-check/InductionVariableElimination.so"
+command = """
+    clang++-17 -O1 -emit-llvm -S {filename} > {base}.ll && \
+    clang++-17 -O1 {filename} -fpass-plugin=../../build/ive/InductionVariableElimination.so
+"""

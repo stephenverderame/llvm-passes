@@ -1,0 +1,7 @@
+Basic IV:   %13 = phi i32 [ 0, %5 ], [ %16, %12 ]
+Basic IV:   %14 = add nuw nsw i32 %13, %8
+Basic IV:   %16 = add nuw nsw i32 %13, 1
+Basic IV:   %10 = add nuw nsw i32 %3, 1
+Basic IV:   %3 = phi i32 [ 0, %0 ], [ %10, %9 ]
+Derived IV: %6 = %3 * 10
+Derived IV: %7 = %3 * 10 + 20

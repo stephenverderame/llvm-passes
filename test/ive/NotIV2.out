@@ -1,0 +1,4 @@
+Basic IV:   %3 = phi i32 [ 0, %0 ], [ %8, %2 ]
+Basic IV:   %4 = phi i32 [ 5000, %0 ], [ %7, %2 ]
+Basic IV:   %7 = add nsw i32 %4, -20
+Basic IV:   %8 = add nuw nsw i32 %3, 1
