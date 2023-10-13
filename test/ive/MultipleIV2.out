@@ -1,4 +1,11 @@
-Basic IV:   %3 = phi i32 [ 5000, %0 ], [ %8, %2 ]
-Basic IV:   %4 = phi i32 [ 100, %0 ], [ %5, %2 ]
-Basic IV:   %5 = add nsw i32 %4, -20
-Basic IV:   %8 = add nsw i32 %3, -20
+Loop: 
+1:                                                ; preds = %8, %0
+  %.01 = phi i32 [ 100, %0 ], [ %5, %8 ]
+  %.0 = phi i32 [ 5000, %0 ], [ %9, %8 ]
+  %2 = icmp sge i32 %.0, 20
+  br i1 %2, label %4, label %3
+
+Basic IV:   %.0 = phi i32 [ 5000, %0 ], [ %9, %8 ]
+Basic IV:   %.01 = phi i32 [ 100, %0 ], [ %5, %8 ]
+Basic IV:   %5 = sub nsw i32 %.01, 20
+Basic IV:   %9 = sub nsw i32 %.0, 20

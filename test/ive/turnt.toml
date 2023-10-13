@@ -1,5 +1,6 @@
 # Working directory is dir of this file
 command = """
-    clang++-17 -O1 -emit-llvm -S {filename} > {base}.ll && \
-    clang++-17 -O1 {filename} -fpass-plugin=../../build/ive/InductionVariableElimination.so
-"""
+    clang++-17 -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa" | llvm-dis-17 > {base}.ll && \
+    opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
+        -passes=ive {base}.ll 2> /dev/null -o /dev/null"""

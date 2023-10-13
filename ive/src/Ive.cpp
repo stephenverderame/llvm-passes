@@ -33,12 +33,21 @@ std::string getName(const Value* V)
     return Str;
 }
 
+/**
+ * @brief Get a set of basic induction variables. The set will contain two
+ * entries for each basic induction variable. One for the phi node and one for
+ * the result of the addition or subtraction.
+ *
+ * @param L the loop
+ * @return the set of basic induction variables
+ */
 // NOLINTNEXTLINE
 auto getBasicIVs(const Loop* L)
 {
     std::unordered_set<const Value*> BasicIVs;
     for (llvm::BasicBlock* BB : L->getBlocks()) {
         for (llvm::Instruction& I : *BB) {
+            // outs() << "Instruction: " << I << "\n";
             if (auto* BinOp = dyn_cast<BinaryOperator>(&I)) {
                 if (BinOp->getOpcode() != Instruction::Add &&
                     BinOp->getOpcode() != Instruction::Sub) {
@@ -60,6 +69,7 @@ auto getBasicIVs(const Loop* L)
                                     IncomingValue)) {
                                 if (Instr == BinOp) {
                                     BasicIVs.insert(RHS);
+                                    BasicIVs.insert(BinOp);
                                 }
                             }
                         }
@@ -76,6 +86,7 @@ auto getBasicIVs(const Loop* L)
                                     IncomingValue)) {
                                 if (Instr == BinOp) {
                                     BasicIVs.insert(LHS);
+                                    BasicIVs.insert(BinOp);
                                 }
                             }
                         }
@@ -104,6 +115,14 @@ struct IndVar {
     inline bool isBasic() const { return Factor == nullptr; }
 };
 
+auto prettyPrint(const Instruction* I)
+{
+    std::string Str;
+    raw_string_ostream Stream(Str);
+    I->print(Stream);
+    return Str;
+}
+
 /**
  * @brief Inserts `BinOp` into `DerivedIVs` if it is a derived induction
  * variable. Otherwise, does nothing.
@@ -120,6 +139,7 @@ auto insertDerivedIV(std::unordered_map<const Value*, IndVar>&& DerivedIVs,
                      const Loop* L)
 {
     const auto Name = getDebugName(BinOp);
+    const auto Instr = prettyPrint(BinOp);
     const auto* LHS = BinOp->getOperand(0);
     const auto* RHS = BinOp->getOperand(1);
     if (BinOp->getOpcode() == Instruction::Mul) {
@@ -165,6 +185,20 @@ auto getDerivedIVs(const Loop* L,
     for (const auto BIV : BasicIVs) {
         DerivedIVs[BIV] =
             IndVar{.BasicIV = BIV, .Factor = nullptr, .Addend = nullptr};
+    }
+    // Basic IVs contains the phi nodes and the resulting value of performing
+    // the basic iv addition or subtraction on that phi node
+    // Convert those additions and subtraction into IndVar structs
+    for (auto& [V, BIV] : DerivedIVs) {
+        if (const auto BinOp = dyn_cast<BinaryOperator>(V); BinOp != nullptr) {
+            for (auto Idx = 0; Idx < 2; ++Idx) {
+                const auto* Operand = BinOp->getOperand(Idx);
+                if (DerivedIVs.contains(Operand)) {
+                    BIV.Addend = BinOp->getOperand(1 - Idx);
+                    BIV.Sub = BinOp->getOpcode() == Instruction::Sub;
+                }
+            }
+        }
     }
     for (const auto* BB : L->getBlocks()) {
         for (const auto& I : *BB) {
@@ -237,9 +271,12 @@ void printIVs(const std::unordered_map<const Value*, IndVar>& DerivedIVs,
             outs() << "\n";
         }
     }
+    outs().flush();
 }
 
-/// This is so hacky
+/// This is so hacky, but it doesn't seem like command line arguments can be
+/// used because the CLI doesn't have access to dynamic libraries loaded due to
+/// the presence of the `--load` flag.
 bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
 
 void runLoop(const Loop* L, bool EnablePrint,
@@ -251,6 +288,7 @@ void runLoop(const Loop* L, bool EnablePrint,
     const auto BasicIVs = getBasicIVs(L);
     const auto DerivedIVs = getDerivedIVs(L, BasicIVs);
     if (EnablePrint) {
+        outs() << "Loop: " << *L->getHeader() << "\n";
         printIVs(DerivedIVs, DisplayedIVs);
     }
 }
@@ -259,6 +297,7 @@ struct InductionVariableElimination
     : public PassInfoMixin<InductionVariableElimination> {
     PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
     {
+        errs() << "Running Pass\n";
         const static auto EnablePrint = isPrintEnabled();
         FunctionAnalysisManager& FAM =
             AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
@@ -272,7 +311,7 @@ struct InductionVariableElimination
             std::unordered_set<const Value*> DisplayedIVs;
 
             // Iterate over all the loops in the function
-            for (llvm::Loop* L : LI) {
+            for (llvm::Loop* L : LI.getTopLevelLoops()) {
                 runLoop(L, EnablePrint, DisplayedIVs);
             }
         }
@@ -290,8 +329,19 @@ llvmGetPassPluginInfo()
             .PluginName = "ive",
             .PluginVersion = "v0.1",
             .RegisterPassBuilderCallbacks = [](PassBuilder& PB) {
+                // for usage with opt
+                PB.registerPipelineParsingCallback(
+                    [](auto Name, ModulePassManager& PM,
+                       auto /* PipelineElement*/) {
+                        if (Name == "ive") {
+                            PM.addPass(InductionVariableElimination{});
+                            return true;
+                        }
+                        return false;
+                    });
+                // for usage with clang
                 PB.registerOptimizerEarlyEPCallback(
-                    [](ModulePassManager& PM, OptimizationLevel Opt) {
+                    [](ModulePassManager& PM, OptimizationLevel /* Level */) {
                         PM.addPass(InductionVariableElimination{});
                     });
             }};

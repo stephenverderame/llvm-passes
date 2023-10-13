@@ -81,6 +81,21 @@
                 "./test/ive/Nested1.cc",
             ],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Opt",
+            "program": "/usr/lib/llvm-17/bin/opt",
+            "args": [
+                "-load-pass-plugin",
+                "./build/ive/InductionVariableElimination.so",
+                // FILE TO DEBUG
+                "./test/ive/Nested1.ll",
+                "-o",
+                "/dev/null",
+            ],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
