@@ -9,7 +9,6 @@ int main()
         printf("%d\n", k);
         k += m;
         int j = k * m + m;
-        // not ind var bc k has already been incremented
         p = k + 10;
         int n = k * 10;
         int nn = n + m;
