@@ -485,8 +485,8 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
 }
 
 /// This is so hacky, but it doesn't seem like command line arguments can be
-/// used because the CLI doesn't have access to dynamic libraries loaded due
-/// to the presence of the `--load` flag.
+/// used because the CLI doesn't seem to have access to the parameters of
+/// dynamic libraries it loaded via CLI arguments.
 bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
 
 struct InductionVariableElimination
