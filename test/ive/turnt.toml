@@ -6,9 +6,17 @@ command = """
     opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
         -passes="ive" {base}.ll 2> /dev/null -o /dev/null"""
 
-[envs.produce_llvm]
+[envs.optimized]
 command = """
     opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
-        -passes="ive,adce" {base}.ll -o {base}_out.ll > /dev/null 2>&1 && \
-    llvm-dis-17 {base}_out.ll -o {base}_out.ll"""
+        -passes="ive,adce,instcombine" {base}.ll -o {base}_out.bc > /dev/null 2>&1 && \
+    llvm-dis-17 {base}_out.bc -o {base}_out.ll && \
+    llc-17 {base}_out.ll -o {base}_out.s && \
+    clang++-17 {base}_out.s -o {base} -no-pie && ./{base}"""
+output.txt = "-"
+
+[envs.baseline]
+command = """
+    llc-17 {base}.ll -o {base}.s && \
+    clang++-17 {base}.s -o {base} -no-pie && ./{base}"""
 output.txt = "-"
