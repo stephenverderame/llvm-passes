@@ -1,0 +1,11 @@
+Loop: 
+1:                                                ; preds = %11, %0
+  %.0 = phi i32 [ 0, %0 ], [ %12, %11 ]
+  %2 = icmp slt i32 %.0, 100
+  br i1 %2, label %4, label %3
+
+Basic IV:   %.0 = phi i32 [ 0, %0 ], [ %12, %11 ]
+Basic IV:   %12 = add nsw i32 %.0, 1
+Derived IV: %5 = %.0 * 10
+Derived IV: %7 = %.0 * 10 + 10
+Derived IV: %9 = %.0 * 10 + 20

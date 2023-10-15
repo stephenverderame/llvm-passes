@@ -6,6 +6,7 @@ int main()
     for (int i = 0; i < 10; ++i) {
         int p = m + i * 10;
         for (int j = 0; j < i; ++j) {
+            // not ind var
             int k = j + i * p;
             printf("%d\n", k);
         }
