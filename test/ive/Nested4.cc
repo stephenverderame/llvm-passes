@@ -10,6 +10,7 @@ int main()
             // not ind var
             int k = j + i * p;
             for (int m = 0; m < k; m += 20) {
+                // not ind var
                 int n = m + k * p;
                 printf("%d\n", n);
             }

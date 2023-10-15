@@ -1,5 +1,3 @@
-
-
 #include <llvm-17/llvm/ADT/APInt.h>
 #include <llvm-17/llvm/IR/IRBuilder.h>
 #include <llvm-17/llvm/IR/InstrTypes.h>
@@ -227,31 +225,6 @@ auto insertDerivedIV(std::unordered_map<Value*, IndVar>&& DerivedIVs,
 }
 
 /**
- * @brief Removes duplicate derived induction variables from the given mapping.
- * Duplicates occur because we insert derived induction variables into the
- * for both the multiplication and addition/subtraction of the affine
- * equation of the derived induction variable.
- *
- * @param DerivedIVs
- * @return cleaned up mapping
- */
-auto cleanupDerivedDuplicates(std::unordered_map<Value*, IndVar>&& DerivedIVs)
-{
-    std::unordered_set<Value*> ToRemove;
-    for (const auto& [Val, IndVar] : DerivedIVs) {
-        for (const auto& Use : Val->uses()) {
-            if (DerivedIVs.contains(Use.getUser()) && !IndVar.isBasic()) {
-                ToRemove.insert(Val);
-            }
-        }
-    }
-    for (auto Val : ToRemove) {
-        DerivedIVs.erase(Val);
-    }
-    return DerivedIVs;
-}
-
-/**
  * @brief Get the Derived IVs object
  *
  * @param L loop
@@ -287,7 +260,6 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
             }
         }
     }
-    // return cleanupDerivedDuplicates(std::move(DerivedIVs));
     return DerivedIVs;
 }
 
@@ -363,12 +335,12 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
  * @param DT
  * @return auto
  */
-auto replaceUses(const Value* OrigIndVar, Value* DerivedIncr,
-                 PHINode* DerivedPhi, const DominatorTree& DT)
+auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
+                 const DominatorTree& DT)
 {
     // replace uses of original IndVar with new increment
     const auto OrigIndVarName = getName(OrigIndVar);
-    std::unordered_set<const Use*> Uses;
+    std::unordered_set<Use*> Uses;
     for (auto& U : OrigIndVar->uses()) {
         Uses.insert(&U);
     }
@@ -376,7 +348,7 @@ auto replaceUses(const Value* OrigIndVar, Value* DerivedIncr,
     // somehow, and I don't know why, but the following keeps adding
     // uses such that it loops forever if we just loop over
     // `OrigIndVar->uses()` directly
-    for (auto U : Uses) {
+    for (auto& U : Uses) {
         auto* InstrUser = U->getUser();
         // debug variables
         const auto UseName = getName(cast<Instruction>(U));
@@ -387,10 +359,25 @@ auto replaceUses(const Value* OrigIndVar, Value* DerivedIncr,
         // then replace it with the result of the derived increment.
         // Otherwise replace it with the derived PHI node
         if (DT.dominates(DerivedIncr, *U)) {
-            InstrUser->setOperand(U->getOperandNo(), DerivedIncr);
+            U->set(DerivedIncr);
         } else {
             assert(DT.dominates(DerivedPhi, *U));
-            InstrUser->setOperand(U->getOperandNo(), DerivedPhi);
+            U->set(DerivedPhi);
+        }
+    }
+}
+
+void assertDominatesUses(const Value* V, const DominatorTree& DT)
+{
+    for (const auto& U : V->uses()) {
+        if (!DT.dominates(V, U)) {
+            const auto UseName = getName(U);
+            const auto VName = getName(V);
+            errs() << VName << " does not dominate " << getName(U.getUser())
+                   << "\n";
+            errs() << "Value: " << *V << "\n";
+            errs() << "User:" << *U.getUser() << "\n";
+            assert(DT.dominates(V, U));
         }
     }
 }
@@ -419,6 +406,11 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     }
 
     const auto& [OrigIvInstr, IndVar] = IV;
+    if (OrigIvInstr->getNumUses() == 0) {
+        return;
+    }
+
+    // outs() << "Transforming derived: " << *OrigIvInstr << "\n\n\n";
 
     IRBuilder<> Builder(LoopHeader);
     Builder.SetInsertPoint(LoopHeader->getFirstNonPHI());
@@ -444,8 +436,11 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     DT.recalculate(F);
     replaceUses(OrigIvInstr, DerivedIncr, PhiNode, DT);
 
-    outs() << F << "\n\n--------\n\nFinished\n\n";
-    outs().flush();
+    // outs() << F << "\n\n--------\n\nFinished\n\n";
+    // outs().flush();
+
+    assertDominatesUses(PhiNode, DT);
+    assertDominatesUses(DerivedIncr, DT);
 }
 
 /**
@@ -494,29 +489,6 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
 /// to the presence of the `--load` flag.
 bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
 
-void runLoop(Loop* L, bool EnablePrint,
-             std::unordered_set<const Value*>& DisplayedIVs, Function& F)
-{
-    for (const auto SubLoop : L->getSubLoops()) {
-        runLoop(SubLoop, EnablePrint, DisplayedIVs, F);
-    }
-    const auto BasicIVs = getBasicIVs(L);
-    auto DerivedIVs = getDerivedIVs(L, BasicIVs);
-
-    // call transform
-    if (EnablePrint) {
-        outs() << "Loop: " << *L->getHeader() << "\n";
-        printIVs(DerivedIVs, DisplayedIVs);
-    }
-
-    // filter out basic and call this on mappings
-    for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
-                             return !P.second.isBasic();
-                         })) {
-        transformDerived(L, P, F);
-    }
-}
-
 struct InductionVariableElimination
     : public PassInfoMixin<InductionVariableElimination> {
     PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
@@ -530,17 +502,43 @@ struct InductionVariableElimination
                 F.getInstructionCount() == 0) {
                 continue;
             }
-            llvm::LoopInfo& LI = FAM.getResult<llvm::LoopAnalysis>(F);
+            llvm::LoopInfo* LI = &FAM.getResult<llvm::LoopAnalysis>(F);
             std::unordered_set<const Value*> DisplayedIVs;
 
+            std::set<llvm::Loop*> Loops;
+            for (llvm::Loop* L : LI->getTopLevelLoops()) {
+                Loops.insert(L);
+            }
             // Iterate over all the loops in the function
-            for (llvm::Loop* L : LI.getTopLevelLoops()) {
+            for (llvm::Loop* L : Loops) {
                 runLoop(L, EnablePrint, DisplayedIVs, F);
             }
         }
 
         return PreservedAnalyses::none();
     };
+
+    void runLoop(Loop* L, bool EnablePrint,
+                 std::unordered_set<const Value*>& DisplayedIVs, Function& F)
+    {
+        for (const auto SubLoop : L->getSubLoops()) {
+            runLoop(SubLoop, EnablePrint, DisplayedIVs, F);
+        }
+        const auto BasicIVs = getBasicIVs(L);
+        auto DerivedIVs = getDerivedIVs(L, BasicIVs);
+
+        if (EnablePrint) {
+            outs() << "Loop: " << *L->getHeader() << "\n";
+            printIVs(DerivedIVs, DisplayedIVs);
+        }
+
+        // filter out basic and call this on mappings
+        for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
+                                 return !P.second.isBasic();
+                             })) {
+            transformDerived(L, P, F);
+        }
+    }
 };
 
 }  // namespace
