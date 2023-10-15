@@ -304,11 +304,15 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
 {
     // add instruction to the end of the pre-header
     IRBuilder<> Builder(LoopPreHeader);
+    if (auto LPTerminator = LoopPreHeader->getTerminator();
+        LPTerminator != nullptr) {
+        Builder.SetInsertPoint(LPTerminator);
+    }
     const auto& BasicIV = *DerivedIV.BasicIv;
     auto* Initial =
         DerivedIV.Factor.has_value()
-            ? ConstantInt::get(BasicIV.Phi->getType(), 0)
-            : Builder.CreateMul(DerivedIV.Factor.value(), BasicIV.InitialVal);
+            ? Builder.CreateMul(DerivedIV.Factor.value(), BasicIV.InitialVal)
+            : ConstantInt::get(BasicIV.Phi->getType(), 0);
     if (!DerivedIV.Addend.has_value()) {
         return Initial;
     }
@@ -363,16 +367,30 @@ auto replaceUses(const Value* OrigIndVar, Value* DerivedIncr,
                  PHINode* DerivedPhi, const DominatorTree& DT)
 {
     // replace uses of original IndVar with new increment
+    const auto OrigIndVarName = getName(OrigIndVar);
+    std::unordered_set<const Use*> Uses;
     for (auto& U : OrigIndVar->uses()) {
-        auto* InstrUser = U.getUser();
+        Uses.insert(&U);
+    }
+
+    // somehow, and I don't know why, but the following keeps adding
+    // uses such that it loops forever if we just loop over
+    // `OrigIndVar->uses()` directly
+    for (auto U : Uses) {
+        auto* InstrUser = U->getUser();
+        // debug variables
+        const auto UseName = getName(cast<Instruction>(U));
+        const auto DebugName = getName(InstrUser);
+        const auto DerivedIncrDebugName = getName(DerivedIncr);
+        const auto DerivedPhiDebugName = getName(DerivedPhi);
         // if the use of the derived is after the increment of the basic IV,
         // then replace it with the result of the derived increment.
         // Otherwise replace it with the derived PHI node
-        if (DT.dominates(DerivedIncr, U)) {
-            InstrUser->setOperand(U.getOperandNo(), DerivedIncr);
+        if (DT.dominates(DerivedIncr, *U)) {
+            InstrUser->setOperand(U->getOperandNo(), DerivedIncr);
         } else {
-            assert(DT.dominates(DerivedPhi, U));
-            InstrUser->setOperand(U.getOperandNo(), DerivedPhi);
+            assert(DT.dominates(DerivedPhi, *U));
+            InstrUser->setOperand(U->getOperandNo(), DerivedPhi);
         }
     }
 }
@@ -394,24 +412,40 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     BasicBlock* LoopLatch = Loop->getLoopLatch();
     if (LoopPreHeader == nullptr || LoopLatch == nullptr) {
         // Assume loop-simplify has been run
+        assert(false &&
+               "Loop preheader or latch is null, did you run "
+               "loop-simplify first?");
         return;
     }
 
-    IRBuilder<> Builder(LoopHeader->getContext());
-
     const auto& [OrigIvInstr, IndVar] = IV;
 
+    IRBuilder<> Builder(LoopHeader);
+    Builder.SetInsertPoint(LoopHeader->getFirstNonPHI());
     // Create a Phi instruction in the current basic block
     PHINode* PhiNode = Builder.CreatePHI(OrigIvInstr->getType(), 2);
 
+    // outs() << F << "\n\n--------\n\nAdded Phi\n";
+    // outs().flush();
+
     auto* DerivedInit = addInitDerived(LoopPreHeader, IndVar);
     PhiNode->addIncoming(DerivedInit, LoopPreHeader);
+
+    // outs() << F << "\n\n--------\n\nAdded Derived Init\n";
+    // outs().flush();
+
     auto* DerivedIncr = addDerivedIncrement(OrigIvInstr, IndVar, PhiNode);
     PhiNode->addIncoming(DerivedIncr, LoopLatch);
+
+    // outs() << F << "\n\n--------\n\nAdded Derived Incr\n";
+    // outs().flush();
 
     DominatorTree DT;
     DT.recalculate(F);
     replaceUses(OrigIvInstr, DerivedIncr, PhiNode, DT);
+
+    outs() << F << "\n\n--------\n\nFinished\n\n";
+    outs().flush();
 }
 
 /**
@@ -461,25 +495,25 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
 bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
 
 void runLoop(Loop* L, bool EnablePrint,
-             std::unordered_set<const Value*>& DisplayedIVs)
+             std::unordered_set<const Value*>& DisplayedIVs, Function& F)
 {
     for (const auto SubLoop : L->getSubLoops()) {
-        runLoop(SubLoop, EnablePrint, DisplayedIVs);
+        runLoop(SubLoop, EnablePrint, DisplayedIVs, F);
     }
     const auto BasicIVs = getBasicIVs(L);
     auto DerivedIVs = getDerivedIVs(L, BasicIVs);
-
-    // filter out basic and call this on mappings
-    // for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
-    //                          return !P.second.isBasic();
-    //                      })) {
-    //     transformDerived(L, P);
-    // }
 
     // call transform
     if (EnablePrint) {
         outs() << "Loop: " << *L->getHeader() << "\n";
         printIVs(DerivedIVs, DisplayedIVs);
+    }
+
+    // filter out basic and call this on mappings
+    for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
+                             return !P.second.isBasic();
+                         })) {
+        transformDerived(L, P, F);
     }
 }
 
@@ -501,7 +535,7 @@ struct InductionVariableElimination
 
             // Iterate over all the loops in the function
             for (llvm::Loop* L : LI.getTopLevelLoops()) {
-                runLoop(L, EnablePrint, DisplayedIVs);
+                runLoop(L, EnablePrint, DisplayedIVs, F);
             }
         }
 

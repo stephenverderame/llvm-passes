@@ -90,8 +90,9 @@
             "args": [
                 "-load-pass-plugin",
                 "./build/ive/InductionVariableElimination.so",
+                "-passes=ive",
                 // FILE TO DEBUG
-                "./test/ive/Nested1.ll",
+                "./test/ive/Nested4.ll",
                 "-o",
                 "/dev/null",
             ],

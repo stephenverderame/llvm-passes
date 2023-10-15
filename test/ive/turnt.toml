@@ -1,6 +1,14 @@
 # Working directory is dir of this file
+[envs.display_ind_vars]
 command = """
     clang++-17 -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
     | opt-17 -passes="mem2reg,sroa,early-cse<memssa>,loop-simplify" | llvm-dis-17 > {base}.ll && \
     opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
         -passes="ive" {base}.ll 2> /dev/null -o /dev/null"""
+
+[envs.produce_llvm]
+command = """
+    opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
+        -passes="ive,adce" {base}.ll -o {base}_out.ll > /dev/null 2>&1 && \
+    llvm-dis-17 {base}_out.ll -o {base}_out.ll"""
+output.txt = "-"

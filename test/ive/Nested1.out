@@ -9,12 +9,16 @@ Derived IV: %11 = %.0 * %.01
 Derived IV: %12 = %.0 * %.01 + %6
 Basic IV:   %15 = add nsw i32 %.0, 1
 Loop: 
-1:                                                ; preds = %17, %0
-  %.01 = phi i32 [ 0, %0 ], [ %18, %17 ]
+1:                                                ; preds = %26, %0
+  %.01 = phi i32 [ 0, %0 ], [ %27, %26 ]
   %2 = icmp slt i32 %.01, 10
   br i1 %2, label %4, label %3
 
-Basic IV:   %.01 = phi i32 [ 0, %0 ], [ %18, %17 ]
-Basic IV:   %18 = add nsw i32 %.01, 1
+Basic IV:   %.01 = phi i32 [ 0, %0 ], [ %27, %26 ]
+Derived IV: %20 = %.01 * 1
+Derived IV: %22 = %.01 * 1
+Basic IV:   %27 = add nsw i32 %.01, 1
 Derived IV: %5 = %.01 * 10
 Derived IV: %6 = %.01 * 10 + 20
+Derived IV: %7 = %.01 * 0
+Derived IV: %9 = %.01 * 0
