@@ -30,14 +30,6 @@ using namespace llvm;
 namespace
 {
 
-std::string getName(const Value* V)
-{
-    std::string Str;
-    raw_string_ostream Stream(Str);
-    V->printAsOperand(Stream, false);
-    return Str;
-}
-
 /**
  * @brief A basic induction variable of the form `i += e` or `i -= e`
  */
@@ -339,10 +331,10 @@ auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
                  const DominatorTree& DT)
 {
     // replace uses of original IndVar with new increment
-    const auto OrigIndVarName = getName(OrigIndVar);
-    std::unordered_set<Use*> Uses;
+    const auto OrigIndVarName = getDebugName(OrigIndVar);
+    std::vector<Use*> Uses;
     for (auto& U : OrigIndVar->uses()) {
-        Uses.insert(&U);
+        Uses.push_back(&U);
     }
 
     // somehow, and I don't know why, but the following keeps adding
@@ -351,10 +343,10 @@ auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
     for (auto& U : Uses) {
         auto* InstrUser = U->getUser();
         // debug variables
-        const auto UseName = getName(cast<Instruction>(U));
-        const auto DebugName = getName(InstrUser);
-        const auto DerivedIncrDebugName = getName(DerivedIncr);
-        const auto DerivedPhiDebugName = getName(DerivedPhi);
+        const auto UseName = getDebugName(cast<Instruction>(U));
+        const auto DebugName = getDebugName(InstrUser);
+        const auto DerivedIncrDebugName = getDebugName(DerivedIncr);
+        const auto DerivedPhiDebugName = getDebugName(DerivedPhi);
         // if the use of the derived is after the increment of the basic IV,
         // then replace it with the result of the derived increment.
         // Otherwise replace it with the derived PHI node
@@ -367,14 +359,18 @@ auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
     }
 }
 
+/**
+ * @brief Asserts that `V` dominates all of its uses, and if not,
+ * prints the uses and the value and asserts.
+ */
 void assertDominatesUses(const Value* V, const DominatorTree& DT)
 {
     for (const auto& U : V->uses()) {
         if (!DT.dominates(V, U)) {
-            const auto UseName = getName(U);
-            const auto VName = getName(V);
-            errs() << VName << " does not dominate " << getName(U.getUser())
-                   << "\n";
+            const auto UseName = getDebugName(U);
+            const auto VName = getDebugName(V);
+            errs() << VName << " does not dominate "
+                   << getDebugName(U.getUser()) << "\n";
             errs() << "Value: " << *V << "\n";
             errs() << "User:" << *U.getUser() << "\n";
             assert(DT.dominates(V, U));
@@ -458,17 +454,17 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
             continue;
         }
         DisplayedIVs.insert(Val);
-        SortedIVs.emplace(getName(Val), std::make_tuple(Val, DerivedIV));
+        SortedIVs.emplace(getDebugName(Val), std::make_tuple(Val, DerivedIV));
     }
     for (const auto& [ValStr, DerivedTuple] : SortedIVs) {
         const auto [Val, DerivedIV] = DerivedTuple;
         if (DerivedIV.isBasic()) {
             outs() << "Basic IV: " << *Val << "\n";
         } else {
-            outs() << "Derived IV: " << getName(Val) << " = ";
-            outs() << getName(DerivedIV.Base);
+            outs() << "Derived IV: " << getDebugName(Val) << " = ";
+            outs() << getDebugName(DerivedIV.Base);
             if (DerivedIV.Factor.has_value()) {
-                outs() << " * " << getName(DerivedIV.Factor.value());
+                outs() << " * " << getDebugName(DerivedIV.Factor.value());
             }
             if (DerivedIV.Addend.has_value()) {
                 if (DerivedIV.Sub) {
@@ -476,7 +472,7 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
                 } else {
                     outs() << " + ";
                 }
-                outs() << getName(DerivedIV.Addend.value());
+                outs() << getDebugName(DerivedIV.Addend.value());
             }
             outs() << "\n";
         }
@@ -505,12 +501,7 @@ struct InductionVariableElimination
             llvm::LoopInfo* LI = &FAM.getResult<llvm::LoopAnalysis>(F);
             std::unordered_set<const Value*> DisplayedIVs;
 
-            std::set<llvm::Loop*> Loops;
             for (llvm::Loop* L : LI->getTopLevelLoops()) {
-                Loops.insert(L);
-            }
-            // Iterate over all the loops in the function
-            for (llvm::Loop* L : Loops) {
                 runLoop(L, EnablePrint, DisplayedIVs, F);
             }
         }
