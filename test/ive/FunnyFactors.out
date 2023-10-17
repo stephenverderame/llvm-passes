@@ -1,0 +1,29 @@
+Loop: 
+22:                                               ; preds = %29, %21
+  %.0 = phi i32 [ 100, %21 ], [ %30, %29 ]
+  %23 = icmp sge i32 %.0, 0
+  br i1 %23, label %25, label %24
+
+Derived IV: %26  = .0 * %1 
+Derived IV: %27  = .0 * %1  + %2 
+Basic IV:   %30 = add nsw i32 %.0, -1
+Basic IV:   %.0 = phi i32 [ 100, %21 ], [ %30, %29 ]
+Loop: 
+10:                                               ; preds = %16, %6
+  %.01 = phi i32 [ 500, %6 ], [ %17, %16 ]
+  %11 = icmp sge i32 %.01, 0
+  br i1 %11, label %13, label %12
+
+Derived IV: %14  = .01 * %8 
+Basic IV:   %17 = add nsw i32 %.01, -1
+Basic IV:   %.01 = phi i32 [ 500, %6 ], [ %17, %16 ]
+Loop: 
+3:                                                ; preds = %23, %0
+  %.02 = phi i32 [ 0, %0 ], [ %24, %23 ]
+  %4 = icmp slt i32 %.02, 100
+  br i1 %4, label %6, label %5
+
+Basic IV:   %24 = add nsw i32 %.02, 1
+Derived IV: %7  = .02 * %1 
+Derived IV: %8  = .02 * %1  + %2 
+Basic IV:   %.02 = phi i32 [ 0, %0 ], [ %24, %23 ]

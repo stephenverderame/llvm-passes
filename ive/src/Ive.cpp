@@ -107,18 +107,21 @@ auto insertBasicIvIntoMap(BasicIVMap&& BasicIVs, BinaryOperator* BinOp,
  * @param L the loop
  * @return the set of basic induction variables
  */
-auto getBasicIVs(const Loop* L)
+auto getBasicIVs(const Loop* L, BasicIVMap& InnerBasics)
 {
     BasicIVMap BasicIVs;
     for (llvm::BasicBlock* BB : L->getBlocks()) {
         for (llvm::Instruction& I : *BB) {
             // outs() << "Instruction: " << I << "\n";
-            if (auto* BinOp = dyn_cast<BinaryOperator>(&I)) {
+            if (auto* BinOp = dyn_cast<BinaryOperator>(&I);
+                BinOp != nullptr && !InnerBasics.contains(BinOp)) {
                 BasicIVs = insertBasicIvIntoMap(std::move(BasicIVs), BinOp, L);
             }
         }
     }
-
+    for (auto& [Val, Basic] : BasicIVs) {
+        InnerBasics.emplace(Val, Basic);
+    }
     return BasicIVs;
 }
 
@@ -363,7 +366,8 @@ auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
  * @brief Asserts that `V` dominates all of its uses, and if not,
  * prints the uses and the value and asserts.
  */
-void assertDominatesUses(const Value* V, const DominatorTree& DT)
+void assertDominatesUses(const Value* V, const DominatorTree& DT,
+                         const std::string& OrigIndVarName)
 {
     for (const auto& U : V->uses()) {
         if (!DT.dominates(V, U)) {
@@ -373,6 +377,7 @@ void assertDominatesUses(const Value* V, const DominatorTree& DT)
                    << getDebugName(U.getUser()) << "\n";
             errs() << "Value: " << *V << "\n";
             errs() << "User:" << *U.getUser() << "\n";
+            errs() << "OrigIndVarName: " << OrigIndVarName << "\n";
             assert(DT.dominates(V, U));
         }
     }
@@ -405,6 +410,7 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     if (OrigIvInstr->getNumUses() == 0) {
         return;
     }
+    const auto OrigName = getDebugName(OrigIvInstr);
 
     // outs() << "Transforming derived: " << *OrigIvInstr << "\n\n\n";
 
@@ -435,8 +441,8 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     // outs() << F << "\n\n--------\n\nFinished\n\n";
     // outs().flush();
 
-    assertDominatesUses(PhiNode, DT);
-    assertDominatesUses(DerivedIncr, DT);
+    assertDominatesUses(PhiNode, DT, OrigName);
+    assertDominatesUses(DerivedIncr, DT, OrigName);
 }
 
 /**
@@ -487,9 +493,10 @@ bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
 
 struct InductionVariableElimination
     : public PassInfoMixin<InductionVariableElimination> {
+    inline static bool EnablePrint = false;
     PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
     {
-        const static auto EnablePrint = isPrintEnabled();
+        EnablePrint = isPrintEnabled();
         FunctionAnalysisManager& FAM =
             AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
         for (auto& F : M) {
@@ -501,21 +508,36 @@ struct InductionVariableElimination
             llvm::LoopInfo* LI = &FAM.getResult<llvm::LoopAnalysis>(F);
             std::unordered_set<const Value*> DisplayedIVs;
 
+            const auto Name = F.getName();
+            BasicIVMap UsedBasics;
             for (llvm::Loop* L : LI->getTopLevelLoops()) {
-                runLoop(L, EnablePrint, DisplayedIVs, F);
+                runLoop(L, DisplayedIVs, F, UsedBasics);
             }
         }
 
         return PreservedAnalyses::none();
     };
 
-    void runLoop(Loop* L, bool EnablePrint,
-                 std::unordered_set<const Value*>& DisplayedIVs, Function& F)
+    /**
+     * @brief Recursive function to perform induction variable eleimination on a
+     * loop and all subloops in preorder (subloops before parent loops).
+     *
+     * @param L loop
+     * @param EnablePrint whether to print debug information
+     * @param DisplayedIVs set of induction variables that have already been
+     * printed. Only used when EnablePrint is true.
+     * @param F function
+     * @param UsedBasics mapping of values to basic induction variables that
+     * have already been used. Used to avoid reusing basic induction variables
+     * that have already been used in a subloop.
+     */
+    void runLoop(Loop* L, std::unordered_set<const Value*>& DisplayedIVs,
+                 Function& F, BasicIVMap& UsedBasics)
     {
         for (const auto SubLoop : L->getSubLoops()) {
-            runLoop(SubLoop, EnablePrint, DisplayedIVs, F);
+            runLoop(SubLoop, DisplayedIVs, F, UsedBasics);
         }
-        const auto BasicIVs = getBasicIVs(L);
+        const auto BasicIVs = getBasicIVs(L, UsedBasics);
         auto DerivedIVs = getDerivedIVs(L, BasicIVs);
 
         if (EnablePrint) {
@@ -523,7 +545,8 @@ struct InductionVariableElimination
             printIVs(DerivedIVs, DisplayedIVs);
         }
 
-        // filter out basic and call this on mappings
+        // filter out basic and call this on
+        //    mappings
         for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
                                  return !P.second.isBasic();
                              })) {

@@ -5725,6 +5725,7 @@ void set(int* ip, TYPE* s1, TYPE* s2)
     *s2 = 2.0;
 }
 
+#ifndef NO_MAIN
 int main(int argc, char* argv[])
 {
     int n1 = 1;
@@ -5947,3 +5948,4 @@ int main(int argc, char* argv[])
 #endif
     return 0;
 }
+#endif

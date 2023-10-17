@@ -92,7 +92,7 @@
                 "./build/ive/InductionVariableElimination.so",
                 "-passes=ive",
                 // FILE TO DEBUG
-                "./test/ive/Nested4.ll",
+                "./test/ive/s126.ll",
                 "-o",
                 "/dev/null",
             ],
