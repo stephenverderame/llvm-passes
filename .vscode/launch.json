@@ -90,6 +90,8 @@
             "args": [
                 "-load-pass-plugin",
                 "./build/ive/InductionVariableElimination.so",
+                "-ive-print",
+                // "-ive-debug",
                 "-passes=ive",
                 // FILE TO DEBUG
                 "./test/ive/s126.ll",

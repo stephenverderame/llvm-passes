@@ -285,11 +285,11 @@ int main()
     cray = .056;
     n = 100;
 
-    fprintf(stderr, ROLLING);
-    fprintf(stderr, PREC);
-    fprintf(stderr, "Precision Linpack Benchmark - PC Version in 'C/C++'\n\n");
-    fprintf(stderr, "Compiler     %s\n", compiler);
-    fprintf(stderr, "Optimisation %s\n\n", options);
+    fprintf(stdout, ROLLING);
+    fprintf(stdout, PREC);
+    fprintf(stdout, "Precision Linpack Benchmark - PC Version in 'C/C++'\n\n");
+    fprintf(stdout, "Compiler     %s\n", compiler);
+    fprintf(stdout, "Optimisation %s\n\n", options);
 
     ops = (2.0e0 * (n * n * n)) / 3.0 + 2.0 * (n * n);
 
@@ -324,16 +324,16 @@ int main()
     x1 = x[0] - 1;
     x2 = x[n - 1] - 1;
 
-    fprintf(stderr, "norm resid      resid           machep");
-    fprintf(stderr, "         x[0]-1          x[n-1]-1\n");
-    fprintf(stderr, "%6.1f %17.8e%17.8e%17.8e%17.8e\n\n", (double)residn,
+    fprintf(stdout, "norm resid      resid           machep");
+    fprintf(stdout, "         x[0]-1          x[n-1]-1\n");
+    fprintf(stdout, "%6.1f %17.8e%17.8e%17.8e%17.8e\n\n", (double)residn,
             (double)resid, (double)epsn, (double)x1, (double)x2);
 
-    fprintf(stderr, "Times are reported for matrices of order        %5d\n", n);
-    fprintf(stderr, "1 pass times for array with leading dimension of%5d\n\n",
+    fprintf(stdout, "Times are reported for matrices of order        %5d\n", n);
+    fprintf(stdout, "1 pass times for array with leading dimension of%5d\n\n",
             lda);
-    fprintf(stderr, "      dgefa      dgesl      total     Mflops       unit");
-    fprintf(stderr, "      ratio\n");
+    fprintf(stdout, "      dgefa      dgesl      total     Mflops       unit");
+    fprintf(stdout, "      ratio\n");
 
     atime[2][0] = total;
     if (total > 0.0) {
@@ -351,7 +351,7 @@ int main()
      *       Calculate overhead of executing matgen procedure              *
      ************************************************************************/
 
-    fprintf(stderr, "\nCalculating matgen overhead\n");
+    fprintf(stdout, "\nCalculating matgen overhead\n");
     pass = PASSES;
     loop = NTIMES;
     do {
@@ -362,7 +362,7 @@ int main()
         }
         time2 = second();
         overhead1 = (time2 - time1);
-        fprintf(stderr, "%10d times %6.2f seconds\n", loop, overhead1);
+        fprintf(stdout, "%10d times %6.2f seconds\n", loop, overhead1);
         if (0 /*overhead1 > 5.0*/) {
             pass = 0;
         }
@@ -377,13 +377,13 @@ int main()
 
     overhead1 = overhead1 / (double)loop;
 
-    fprintf(stderr, "Overhead for 1 matgen %12.5f seconds\n\n", overhead1);
+    fprintf(stdout, "Overhead for 1 matgen %12.5f seconds\n\n", overhead1);
 
     /************************************************************************
      *           Calculate matgen/dgefa passes for 5 seconds                *
      ************************************************************************/
 
-    fprintf(stderr, "Calculating matgen/dgefa passes for 5 seconds\n");
+    fprintf(stdout, "Calculating matgen/dgefa passes for 5 seconds\n");
     pass = PASSES;
     ntimes = NTIMES;
     do {
@@ -394,7 +394,7 @@ int main()
             dgefa(a, lda, n, ipvt, &info);
         }
         time2 = second() - time1;
-        fprintf(stderr, "%10d times %6.2f seconds\n", ntimes, time2);
+        fprintf(stdout, "%10d times %6.2f seconds\n", ntimes, time2);
         if (0 /*time2 > 5.0*/) {
             pass = 0;
         }
@@ -414,10 +414,10 @@ int main()
 #endif
     if (ntimes == 0) ntimes = 1;
 
-    fprintf(stderr, "Passes used %10d \n\n", pass);
-    fprintf(stderr, "Times for array with leading dimension of%4d\n\n", lda);
-    fprintf(stderr, "      dgefa      dgesl      total     Mflops       unit");
-    fprintf(stderr, "      ratio\n");
+    fprintf(stdout, "Passes used %10d \n\n", pass);
+    fprintf(stdout, "Times for array with leading dimension of%4d\n\n", lda);
+    fprintf(stdout, "      dgefa      dgesl      total     Mflops       unit");
+    fprintf(stdout, "      ratio\n");
 
     /************************************************************************
      *                              Execute 5 passes                        *
@@ -453,9 +453,9 @@ int main()
         print_time(j);
     }
     atime[3][6] = atime[3][6] / 5.0;
-    fprintf(stderr, "Average                          %11.2f\n", atime[3][6]);
+    fprintf(stdout, "Average                          %11.2f\n", atime[3][6]);
 
-    fprintf(stderr, "\nCalculating matgen2 overhead\n");
+    fprintf(stdout, "\nCalculating matgen2 overhead\n");
 
     /************************************************************************
      *             Calculate overhead of executing matgen procedure         *
@@ -469,10 +469,10 @@ int main()
     overhead2 = (time2 - time1);
     overhead2 = overhead2 / (double)loop;
 
-    fprintf(stderr, "Overhead for 1 matgen %12.5f seconds\n\n", overhead2);
-    fprintf(stderr, "Times for array with leading dimension of%4d\n\n", ldaa);
-    fprintf(stderr, "      dgefa      dgesl      total     Mflops       unit");
-    fprintf(stderr, "      ratio\n");
+    fprintf(stdout, "Overhead for 1 matgen %12.5f seconds\n\n", overhead2);
+    fprintf(stdout, "Times for array with leading dimension of%4d\n\n", ldaa);
+    fprintf(stdout, "      dgefa      dgesl      total     Mflops       unit");
+    fprintf(stdout, "      ratio\n");
 
     /************************************************************************
      *                              Execute 5 passes                        *
@@ -508,7 +508,7 @@ int main()
         print_time(j);
     }
     atime[3][12] = atime[3][12] / 5.0;
-    fprintf(stderr, "Average                          %11.2f\n", atime[3][12]);
+    fprintf(stdout, "Average                          %11.2f\n", atime[3][12]);
 
     /************************************************************************
      *           Use minimum average as overall Mflops rating               *

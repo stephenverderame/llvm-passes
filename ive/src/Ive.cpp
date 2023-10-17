@@ -27,6 +27,14 @@
 // NOLINTNEXTLINE
 using namespace llvm;
 
+static cl::opt<bool> EnablePrint(
+    "ive-print", cl::desc("Enable printing of detected induction variables"),
+    cl::init(false));
+
+static cl::opt<bool> EnableDebug(
+    "ive-debug", cl::desc("Enable printing of debug information"),
+    cl::init(false));
+
 namespace
 {
 
@@ -279,7 +287,7 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
     auto* Initial =
         DerivedIV.Factor.has_value()
             ? Builder.CreateMul(DerivedIV.Factor.value(), BasicIV.InitialVal)
-            : ConstantInt::get(BasicIV.Phi->getType(), 0);
+            : BasicIV.InitialVal;
     if (!DerivedIV.Addend.has_value()) {
         return Initial;
     }
@@ -412,34 +420,44 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
     }
     const auto OrigName = getDebugName(OrigIvInstr);
 
-    // outs() << "Transforming derived: " << *OrigIvInstr << "\n\n\n";
+    if (EnableDebug) {
+        outs() << "Transforming derived: " << *OrigIvInstr << "\n\n\n";
+    }
 
     IRBuilder<> Builder(LoopHeader);
     Builder.SetInsertPoint(LoopHeader->getFirstNonPHI());
     // Create a Phi instruction in the current basic block
     PHINode* PhiNode = Builder.CreatePHI(OrigIvInstr->getType(), 2);
 
-    // outs() << F << "\n\n--------\n\nAdded Phi\n";
-    // outs().flush();
+    if (EnableDebug) {
+        outs() << F << "\n\n--------\n\nAdded Phi\n";
+        outs().flush();
+    }
 
     auto* DerivedInit = addInitDerived(LoopPreHeader, IndVar);
     PhiNode->addIncoming(DerivedInit, LoopPreHeader);
 
-    // outs() << F << "\n\n--------\n\nAdded Derived Init\n";
-    // outs().flush();
+    if (EnableDebug) {
+        outs() << F << "\n\n--------\n\nAdded Derived Init\n";
+        outs().flush();
+    }
 
     auto* DerivedIncr = addDerivedIncrement(OrigIvInstr, IndVar, PhiNode);
     PhiNode->addIncoming(DerivedIncr, LoopLatch);
 
-    // outs() << F << "\n\n--------\n\nAdded Derived Incr\n";
-    // outs().flush();
+    if (EnableDebug) {
+        outs() << F << "\n\n--------\n\nAdded Derived Incr\n";
+        outs().flush();
+    }
 
     DominatorTree DT;
     DT.recalculate(F);
     replaceUses(OrigIvInstr, DerivedIncr, PhiNode, DT);
 
-    // outs() << F << "\n\n--------\n\nFinished\n\n";
-    // outs().flush();
+    if (EnableDebug) {
+        outs() << F << "\n\n--------\n\nFinished\n\n\n\n";
+        outs().flush();
+    }
 
     assertDominatesUses(PhiNode, DT, OrigName);
     assertDominatesUses(DerivedIncr, DT, OrigName);
@@ -486,17 +504,10 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
     outs().flush();
 }
 
-/// This is so hacky, but it doesn't seem like command line arguments can be
-/// used because the CLI doesn't seem to have access to the parameters of
-/// dynamic libraries it loaded via CLI arguments.
-bool isPrintEnabled() { return std::filesystem::exists(".ive_enable_print"); }
-
 struct InductionVariableElimination
     : public PassInfoMixin<InductionVariableElimination> {
-    inline static bool EnablePrint = false;
     PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
     {
-        EnablePrint = isPrintEnabled();
         FunctionAnalysisManager& FAM =
             AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
         for (auto& F : M) {
@@ -523,7 +534,6 @@ struct InductionVariableElimination
      * loop and all subloops in preorder (subloops before parent loops).
      *
      * @param L loop
-     * @param EnablePrint whether to print debug information
      * @param DisplayedIVs set of induction variables that have already been
      * printed. Only used when EnablePrint is true.
      * @param F function

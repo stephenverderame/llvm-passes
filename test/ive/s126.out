@@ -12,23 +12,23 @@ Basic IV:   %18 = add nsw i32 %.0, 1
 Basic IV:   %.0 = phi i32 [ 1, %8 ], [ %18, %17 ]
 Basic IV:   %.1 = phi i32 [ %.01, %8 ], [ %16, %17 ]
 Loop: 
-5:                                                ; preds = %25, %4
-  %.03 = phi i32 [ 0, %4 ], [ %26, %25 ]
-  %.01 = phi i32 [ 1, %4 ], [ %24, %25 ]
+5:                                                ; preds = %26, %4
+  %.03 = phi i32 [ 0, %4 ], [ %27, %26 ]
+  %.01 = phi i32 [ 1, %4 ], [ %25, %26 ]
   %6 = icmp slt i32 %.03, 100
   br i1 %6, label %8, label %7
 
-Basic IV:   %10 = phi i32 [ -1, %8 ], [ %21, %20 ]
-Basic IV:   %11 = phi i32 [ -1, %8 ], [ %18, %20 ]
-Basic IV:   %18 = add i32 %11, 1
-Basic IV:   %21 = add i32 %10, 1
-Basic IV:   %26 = add nsw i32 %.03, 1
-Basic IV:   %.03 = phi i32 [ 0, %4 ], [ %26, %25 ]
+Basic IV:   %11 = phi i32 [ %9, %8 ], [ %19, %21 ]
+Basic IV:   %12 = phi i32 [ 0, %8 ], [ %22, %21 ]
+Basic IV:   %19 = add i32 %11, 1
+Basic IV:   %22 = add i32 %12, 1
+Basic IV:   %27 = add nsw i32 %.03, 1
+Basic IV:   %.03 = phi i32 [ 0, %4 ], [ %27, %26 ]
 Loop: 
-1:                                                ; preds = %28, %0
-  %.02 = phi i32 [ 0, %0 ], [ %29, %28 ]
+1:                                                ; preds = %29, %0
+  %.02 = phi i32 [ 0, %0 ], [ %30, %29 ]
   %2 = icmp slt i32 %.02, 100
   br i1 %2, label %4, label %3
 
-Basic IV:   %29 = add nsw i32 %.02, 1
-Basic IV:   %.02 = phi i32 [ 0, %0 ], [ %29, %28 ]
+Basic IV:   %30 = add nsw i32 %.02, 1
+Basic IV:   %.02 = phi i32 [ 0, %0 ], [ %30, %29 ]
