@@ -1,0 +1,36 @@
+
+[envs.optimized_correct]
+command = """
+    clang++-17 -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa,early-cse<memssa>,loop-simplify,instcombine,adce" \
+    | opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
+        -passes="ive,adce,instcombine" \
+    | llc-17 -o /dev/stdout \
+    | clang++-17 -x assembler -no-pie - && ./a.out"""
+output.txt = "-"
+
+[envs.baseline_correct]
+command = """
+    clang++-17 -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa,early-cse<memssa>,loop-simplify,instcombine,adce" \
+    | llc-17 -o /dev/stdout \
+    | clang++-17 -x assembler -no-pie - && ./a.out"""
+output.txt = "-"
+
+[envs.optimized_perf]
+command = """
+    clang++-17 -D USE_CLOCK -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa,early-cse<memssa>,loop-simplify,instcombine,adce" \
+    | opt-17 -load-pass-plugin ../../build/ive/InductionVariableElimination.so \
+        -passes="ive,adce,instcombine" \
+    | llc-17 -o /dev/stdout \
+    | clang++-17 -x assembler -no-pie - && ./a.out"""
+output.perf_opt = "-"
+
+[envs.baseline_perf]
+command = """
+    clang++-17 -D USE_CLOCK -O1 -mllvm -disable-llvm-optzns {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa,early-cse<memssa>,loop-simplify,instcombine,adce" \
+    | llc-17 -o /dev/stdout \
+    | clang++-17 -x assembler -no-pie - && ./a.out"""
+output.perf_base = "-"
