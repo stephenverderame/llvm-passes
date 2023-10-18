@@ -9,6 +9,7 @@
 #include <llvm-17/llvm/Support/Casting.h>
 #include <llvm-17/llvm/Support/CommandLine.h>
 #include <llvm-17/llvm/Transforms/Scalar/LoopPassManager.h>
+#include <llvm/Analysis/LazyValueInfo.h>
 #include <llvm/IR/Dominators.h>
 
 #include <exception>
@@ -137,20 +138,29 @@ auto getBasicIVs(const Loop* L, BasicIVMap& InnerBasics)
  * @brief A derived induction variable of the form `BasicIV * Factor + Addend`.
  * A basic IV is a Derived IV with `Factor` and `Addend` as `nullptr`.
  */
-struct IndVar {
+class IndVar
+{
+  private:
     /// The value of the basic induction variable this is derived from
     // (either the phi node or the result of the addition/subtraction)
     Value* Base = nullptr;
     /// The basic induction variable that this is derived from
     std::shared_ptr<BasicIV> BasicIv = nullptr;
+    /// True if this is a basic induction variable
+    bool IsBasic = false;
+
+  public:
     /// Nullopt if Factor is 1
     std::optional<Value*> Factor = {};
     /// Nullopt if Addend is 0
     std::optional<Value*> Addend = {};
     /// True if Addend should be negative (`j = i * c - d`)
     bool Sub = false;
-    /// True if this is a basic induction variable
-    bool IsBasic = false;
+    /// The PHI node for this derived induction variable
+    std::optional<PHINode*> DerivedPhi = {};
+    /// The final binary operator for the update of this derived induction
+    /// variable
+    std::optional<Value*> DerivedIncr = {};
 
     IndVar(Value* Base, const std::shared_ptr<BasicIV>& BasicIv, Value* Factor)
         : Base(Base), BasicIv(BasicIv), Factor(Factor)
@@ -178,6 +188,9 @@ struct IndVar {
     }
 
     inline bool isBasic() const { return IsBasic; }
+
+    inline auto* getBase() const { return Base; }
+    inline auto getBasic() const { return BasicIv; }
 };
 
 auto prettyPrint(const Instruction* I)
@@ -283,7 +296,7 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
         LPTerminator != nullptr) {
         Builder.SetInsertPoint(LPTerminator);
     }
-    const auto& BasicIV = *DerivedIV.BasicIv;
+    const auto& BasicIV = *DerivedIV.getBasic();
     auto* Initial =
         DerivedIV.Factor.has_value()
             ? Builder.CreateMul(DerivedIV.Factor.value(), BasicIV.InitialVal)
@@ -312,8 +325,8 @@ auto getDerivedIVs(const Loop* L, const BasicIVMap& BasicIVs)
 [[nodiscard]] Value* addDerivedIncrement(const Value* IndVarVal,
                                          const IndVar& IV, PHINode* DerivedPhi)
 {
-    auto* BasicIVIncr = IV.BasicIv->BinOp;
-    Value* BasicIVStride = IV.BasicIv->Addend;
+    auto* BasicIVIncr = IV.getBasic()->BinOp;
+    Value* BasicIVStride = IV.getBasic()->Addend;
 
     IRBuilder<> Builder(BasicIVIncr);
     Value* IndMul = IV.Factor.has_value()
@@ -344,9 +357,8 @@ auto replaceUses(Value* OrigIndVar, Value* DerivedIncr, PHINode* DerivedPhi,
     // replace uses of original IndVar with new increment
     const auto OrigIndVarName = getDebugName(OrigIndVar);
     std::vector<Use*> Uses;
-    for (auto& U : OrigIndVar->uses()) {
-        Uses.push_back(&U);
-    }
+    std::transform(OrigIndVar->uses().begin(), OrigIndVar->uses().end(),
+                   std::back_inserter(Uses), [](auto& U) { return &U; });
 
     // somehow, and I don't know why, but the following keeps adding
     // uses such that it loops forever if we just loop over
@@ -400,7 +412,7 @@ void assertDominatesUses(const Value* V, const DominatorTree& DT,
  * @param IV the derived induction variable
  * @param F the function
  */
-void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
+void transformDerived(Loop* Loop, std::pair<Value* const, IndVar>& IV,
                       Function& F)
 {
     BasicBlock* LoopHeader = Loop->getHeader();
@@ -414,7 +426,7 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
         return;
     }
 
-    const auto& [OrigIvInstr, IndVar] = IV;
+    auto& [OrigIvInstr, IndVar] = IV;
     if (OrigIvInstr->getNumUses() == 0) {
         return;
     }
@@ -424,7 +436,7 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
         outs() << "Transforming derived: " << *OrigIvInstr << "\n\n\n";
     }
 
-    IRBuilder<> Builder(LoopHeader);
+    IRBuilder Builder(LoopHeader);
     Builder.SetInsertPoint(LoopHeader->getFirstNonPHI());
     // Create a Phi instruction in the current basic block
     PHINode* PhiNode = Builder.CreatePHI(OrigIvInstr->getType(), 2);
@@ -461,6 +473,9 @@ void transformDerived(Loop* Loop, const std::pair<Value* const, IndVar>& IV,
 
     assertDominatesUses(PhiNode, DT, OrigName);
     assertDominatesUses(DerivedIncr, DT, OrigName);
+
+    IndVar.DerivedIncr = DerivedIncr;
+    IndVar.DerivedPhi = PhiNode;
 }
 
 /**
@@ -486,7 +501,7 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
             outs() << "Basic IV: " << *Val << "\n";
         } else {
             outs() << "Derived IV: " << getDebugName(Val) << " = ";
-            outs() << getDebugName(DerivedIV.Base);
+            outs() << getDebugName(DerivedIV.getBase());
             if (DerivedIV.Factor.has_value()) {
                 outs() << " * " << getDebugName(DerivedIV.Factor.value());
             }
@@ -504,6 +519,120 @@ void printIVs(const std::unordered_map<Value*, IndVar>& DerivedIVs,
     outs().flush();
 }
 
+/**
+ * @brief Replaces the uses of the basic induction which `Derived` is derived
+ * from with the derived induction variable for uses which are comparisons.
+ *
+ * @param L loop
+ * @param Derived derived induction variable
+ * @param DT dominator tree
+ * @param LVI lazy value info
+ * @return true if any changes were made
+ */
+bool replaceCmp(Loop* L, const IndVar& Derived, const DominatorTree& DT,
+                LazyValueInfo& LVI)
+{
+    std::vector<Use*> Uses;
+    std::transform(Derived.getBasic()->Phi->use_begin(),
+                   Derived.getBasic()->Phi->use_end(), std::back_inserter(Uses),
+                   [](auto& U) { return &U; });
+    bool AnyChange = false;
+    for (auto* U : Uses) {
+        if (auto* Cmp = dyn_cast<CmpInst>(U->getUser())) {
+            assert(Cmp->getNumOperands() == 2);
+            auto* Other = Cmp->getOperand(1 - U->getOperandNo());
+            if (!L->isLoopInvariant(Other)) {
+                // no sense in adding extra computation if it cannot be put in
+                // the preheader
+                continue;
+            }
+            if (Derived.Factor.has_value() &&
+                (LVI.getConstantRange(Other, Cmp).contains(APInt(8, 0)) ||
+                 !LVI.getConstantRange(Derived.Factor.value(), Cmp)
+                      .isAllNonNegative())) {
+                // we only support positive factors
+                continue;
+            }
+            // insert right before the cmp instruction bc the expression might
+            // not be loop invariant
+            IRBuilder Builder(Cmp);
+            auto* Mul = Derived.Factor.has_value()
+                            ? Builder.CreateMul(Other, Derived.Factor.value())
+                            : Other;
+            if (Derived.Addend.has_value()) {
+                auto* Add =
+                    Derived.Sub
+                        ? Builder.CreateSub(Mul, Derived.Addend.value())
+                        : Builder.CreateAdd(Mul, Derived.Addend.value());
+                Cmp->setOperand(1 - U->getOperandNo(), Add);
+            } else {
+                Cmp->setOperand(1 - U->getOperandNo(), Mul);
+            }
+            if (DT.dominates(Derived.DerivedIncr.value(), Cmp)) {
+                U->set(Derived.DerivedIncr.value());
+            } else {
+                assert(DT.dominates(Derived.DerivedPhi.value(), Cmp));
+                U->set(Derived.DerivedPhi.value());
+            }
+
+            AnyChange = true;
+        }
+    }
+    return AnyChange;
+}
+
+/**
+ * @brief Replaces comparisons of the basic induction variable with a loop
+ * invariant expression to that of the derived induction variable if there
+ * exists a derived IV.
+ *
+ * @param L loop
+ * @param Derived mapping of all induction variables
+ * @param F function
+ * @param LVI lazy value info
+ */
+void replaceComparisons(Loop* L,
+                        const std::unordered_map<Value*, IndVar>& Derived,
+                        Function& F, LazyValueInfo& LVI)
+{
+    std::unordered_set<Value*> Transformed;
+    for (const auto& [Val, IndVar] : Derived) {
+        if (IndVar.isBasic() || Transformed.contains(IndVar.getBase())) {
+            continue;
+        }
+        const auto& Basic = IndVar.getBasic();
+        bool DoReplace = true;
+        for (const auto& U : Val->uses()) {
+            if (Derived.contains(U.getUser())) {
+                // not "the most derived" induction variable, so we won't
+                // replace basic comparison with this one bc it might end up
+                // being dead
+                DoReplace = false;
+                break;
+            }
+        }
+        for (const auto& U : Basic->Phi->uses()) {
+            if (!Derived.contains(U.getUser()) && U.getUser() != Basic->BinOp &&
+                dyn_cast<CmpInst>(U.getUser()) == nullptr) {
+                // there is a use of the basic induction variable that isn't a
+                // compare, a derived induction variable, or the increment of
+                // the basic induction variable. So we can't eliminate the basic
+                // induction variable and might as well not replace the compare
+                DoReplace = false;
+                break;
+            }
+        }
+        if (DoReplace && IndVar.DerivedIncr.has_value() &&
+            IndVar.DerivedPhi.has_value()) {
+            DominatorTree DT;
+            DT.recalculate(F);
+            if (replaceCmp(L, IndVar, DT, LVI)) {
+                Transformed.insert(IndVar.getBase());
+            }
+        }
+    }
+}
+
 struct InductionVariableElimination
     : public PassInfoMixin<InductionVariableElimination> {
     PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM)
@@ -518,11 +647,13 @@ struct InductionVariableElimination
             }
             llvm::LoopInfo* LI = &FAM.getResult<llvm::LoopAnalysis>(F);
             std::unordered_set<const Value*> DisplayedIVs;
+            llvm::LazyValueInfo* LVI =
+                &FAM.getResult<llvm::LazyValueAnalysis>(F);
 
             const auto Name = F.getName();
             BasicIVMap UsedBasics;
             for (llvm::Loop* L : LI->getTopLevelLoops()) {
-                runLoop(L, DisplayedIVs, F, UsedBasics);
+                runLoop(L, DisplayedIVs, F, UsedBasics, *LVI);
             }
         }
 
@@ -542,10 +673,10 @@ struct InductionVariableElimination
      * that have already been used in a subloop.
      */
     void runLoop(Loop* L, std::unordered_set<const Value*>& DisplayedIVs,
-                 Function& F, BasicIVMap& UsedBasics)
+                 Function& F, BasicIVMap& UsedBasics, LazyValueInfo& LVI)
     {
         for (const auto SubLoop : L->getSubLoops()) {
-            runLoop(SubLoop, DisplayedIVs, F, UsedBasics);
+            runLoop(SubLoop, DisplayedIVs, F, UsedBasics, LVI);
         }
         const auto BasicIVs = getBasicIVs(L, UsedBasics);
         auto DerivedIVs = getDerivedIVs(L, BasicIVs);
@@ -557,11 +688,13 @@ struct InductionVariableElimination
 
         // filter out basic and call this on
         //    mappings
-        for (const auto& P : DerivedIVs | std::views::filter([](auto& P) {
-                                 return !P.second.isBasic();
-                             })) {
+        for (auto& P : DerivedIVs | std::views::filter([](auto& P) {
+                           return !P.second.isBasic();
+                       })) {
             transformDerived(L, P, F);
         }
+
+        replaceComparisons(L, DerivedIVs, F, LVI);
     }
 };
 

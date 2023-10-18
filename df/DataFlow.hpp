@@ -376,11 +376,7 @@ inline std::string getDebugName(const llvm::Value* I)
     }
     std::string Res;
     llvm::raw_string_ostream Stream(Res);
-    I->print(Stream, false);
-    Res = Res.substr(Res.find_first_not_of(" "));
-    if (auto EqIdx = Res.find_first_of("="); EqIdx != std::string::npos) {
-        Res = Res.substr(0, EqIdx);
-    }
+    I->printAsOperand(Stream, false);
     return Res;
 }
 

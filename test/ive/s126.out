@@ -5,8 +5,8 @@ Loop:
   %10 = icmp slt i32 %.0, 100
   br i1 %10, label %12, label %11
 
-Derived IV: %13  = .0 - i32 1
-Derived IV: %14  = .1 - i32 1
+Derived IV: %13 = .0 - 1
+Derived IV: %14 = .1 - 1
 Basic IV:   %16 = add nsw i32 %.1, 1
 Basic IV:   %18 = add nsw i32 %.0, 1
 Basic IV:   %.0 = phi i32 [ 1, %8 ], [ %18, %17 ]

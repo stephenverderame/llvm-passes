@@ -4,8 +4,8 @@ Loop:
   %11 = icmp sge i32 %.0, 0
   br i1 %11, label %13, label %12
 
-Derived IV: %14  = .0 * i32 20
-Derived IV: %15  = .0 * i32 20 + i32 4
+Derived IV: %14 = .0 * 20
+Derived IV: %15 = .0 * 20 + 4
 Basic IV:   %18 = add nsw i32 %.0, -1
 Basic IV:   %.0 = phi i32 [ 10, %9 ], [ %18, %17 ]
 Loop: 
@@ -14,6 +14,6 @@ Loop:
   %2 = icmp slt i32 %.01, 10
   br i1 %2, label %4, label %3
 
-Derived IV: %5  = .01 * i32 10
+Derived IV: %5 = .01 * 10
 Basic IV:   %8 = add nsw i32 %.01, 1
 Basic IV:   %.01 = phi i32 [ 0, %0 ], [ %8, %7 ]
