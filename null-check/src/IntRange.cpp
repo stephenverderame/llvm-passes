@@ -274,32 +274,48 @@ LatticeElem<IntRange> IntRange::meet(const IntRange& A, const IntRange& B)
 IntRange operator*(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Lower = A.Lower * B.Lower;
-    Res.Upper = A.Upper * B.Upper;
+    const auto LL = A.Lower * B.Lower;
+    const auto LU = A.Lower * B.Upper;
+    const auto UL = A.Upper * B.Lower;
+    const auto UU = A.Upper * B.Upper;
+    Res.Lower = min({LL, LU, UL, UU});
+    Res.Upper = max({LL, LU, UL, UU});
     return Res;
 }
 
 IntRange operator+(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Lower = A.Lower + B.Lower;
-    Res.Upper = A.Upper + B.Upper;
+    const auto LL = A.Lower + B.Lower;
+    const auto LU = A.Lower + B.Upper;
+    const auto UL = A.Upper + B.Lower;
+    const auto UU = A.Upper + B.Upper;
+    Res.Lower = min({LL, LU, UL, UU});
+    Res.Upper = max({LL, LU, UL, UU});
     return Res;
 }
 
 IntRange operator-(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Lower = A.Lower - B.Upper;
-    Res.Upper = A.Upper - B.Lower;
+    const auto LL = A.Lower - B.Lower;
+    const auto LU = A.Lower - B.Upper;
+    const auto UL = A.Upper - B.Lower;
+    const auto UU = A.Upper - B.Upper;
+    Res.Lower = min({LL, LU, UL, UU});
+    Res.Upper = max({LL, LU, UL, UU});
     return Res;
 }
 
 IntRange operator/(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Lower = A.Lower / B.Upper;
-    Res.Upper = A.Upper / B.Lower;
+    const auto LL = A.Lower / B.Lower;
+    const auto LU = A.Lower / B.Upper;
+    const auto UL = A.Upper / B.Lower;
+    const auto UU = A.Upper / B.Upper;
+    Res.Lower = min({LL, LU, UL, UU});
+    Res.Upper = max({LL, LU, UL, UU});
     return Res;
 }
 
@@ -328,8 +344,12 @@ IntRange IntRange::remainder(const IntRange& Other, bool Signed) const
 IntRange operator<<(const IntRange& A, const IntRange& B)
 {
     IntRange Res;
-    Res.Lower = A.Lower * pow(2, B.Lower);
-    Res.Upper = A.Upper * pow(2, B.Upper);
+    const auto LL = A.Lower * pow(2, B.Lower);
+    const auto LU = A.Lower * pow(2, B.Upper);
+    const auto UL = A.Upper * pow(2, B.Lower);
+    const auto UU = A.Upper * pow(2, B.Upper);
+    Res.Lower = min({LL, LU, UL, UU});
+    Res.Upper = max({LL, LU, UL, UU});
     return Res;
 }
 
@@ -356,16 +376,20 @@ IntRange IntRange::toUnsigned(unsigned int BitWidth) const
 IntRange IntRange::pow(bigint&& Exponent) const
 {
     IntRange Res;
-    Res.Lower = bound::pow(Lower, bound::Bound(Exponent));
-    Res.Upper = bound::pow(Upper, bound::Bound(Exponent));
+    const auto A = bound::pow(Lower, bound::Bound(Exponent));
+    const auto B = bound::pow(Upper, bound::Bound(Exponent));
+    Res.Lower = min(A, B);
+    Res.Upper = max(A, B);
     return Res;
 }
 
 IntRange IntRange::exponentiate(bigint&& Base) const
 {
     IntRange Res;
-    Res.Lower = bound::pow(Bound(Base), Lower);
-    Res.Upper = bound::pow(Bound(Base), Upper);
+    const auto A = bound::pow(Bound(Base), Lower);
+    const auto B = bound::pow(Bound(Base), Upper);
+    Res.Lower = min(A, B);
+    Res.Upper = max(A, B);
     return Res;
 }
 
