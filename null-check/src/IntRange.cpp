@@ -30,14 +30,14 @@ Bound toSigned(const Bound& A, unsigned int BitWidth)
     return A;
 }
 /**
- * @brief Computes `LHS Cond RHS` when `LHS` is bottom and `RHS` is not top.
+ * @brief Computes `LHS Cond RHS` when `LHS` is unbounded and `RHS` is not top.
  *
  * @param RHS
  * @param Cond
  * @return LatticeElem<IntRange>
  */
-LatticeElem<IntRange> opWhenLhsBottom(const LatticeElem<IntRange>& RHS,
-                                      llvm::ICmpInst::Predicate Cond)
+LatticeElem<IntRange> opWhenLhsUnbounded(const LatticeElem<IntRange>& RHS,
+                                         llvm::ICmpInst::Predicate Cond)
 {
     if (RHS.isBottom()) {
         return RHS;
@@ -103,8 +103,11 @@ LatticeElem<IntRange> adjustForConditionHelper(const LatticeElem<IntRange>& LHS,
                                                llvm::ICmpInst::Predicate Cond,
                                                Func&& Fn)
 {
-    if (LHS.isBottom() && !RHS.isTop()) {
-        return opWhenLhsBottom(RHS, Cond);
+    if (LHS.isTop() || RHS.isTop()) {
+        return LatticeElem<IntRange>::makeTop();
+    }
+    if ((LHS.isBottom() || LHS.isTop()) && !RHS.isTop()) {
+        return opWhenLhsUnbounded(RHS, Cond);
     } else if (LHS.hasValue() && RHS.hasValue()) {
         auto Res = Fn(LHS, RHS);
         if (Res.Lower > Res.Upper) {

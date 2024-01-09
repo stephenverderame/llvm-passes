@@ -1,4 +1,13 @@
 # Working directory is dir of this file
-command = "clang++-17 -g {filename} -fpass-plugin=../../../build/null-check/NullCheck.so"
+[envs.ssa]
+command = """clang++-17 -O1 -mllvm -disable-llvm-optzns -g {filename} -emit-llvm -S -o /dev/stdout \
+    | opt-17 -passes="mem2reg,sroa" \
+    | opt-17 -load-pass-plugin ../../../build/null-check/NullCheck.so \
+        -passes="null-check" -o /dev/null"""
 return_code = 2
 output.txt = "2"
+
+[envs.stack]
+command = "clang++-17 -g {filename} -fpass-plugin=../../../build/null-check/NullCheck.so"
+return_code = 2
+output.out = "2"

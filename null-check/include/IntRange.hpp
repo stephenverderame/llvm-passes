@@ -114,6 +114,11 @@ struct IntRange {
      * @return IntRange
      */
     [[nodiscard]] bound::Bound size() const;
+
+    /**
+     * @brief Returns a new unbounded range (ie. [-inf, inf])
+     */
+    [[nodiscard]] static IntRange makeUnbounded() { return IntRange(); }
 };
 
 [[nodiscard]] IntRange operator*(const IntRange& A, const IntRange& B);

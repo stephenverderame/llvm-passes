@@ -12,6 +12,8 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils.h>
 
 #include <exception>
 #include <sstream>
@@ -143,11 +145,14 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
         for (auto& F : M) {
             const auto Name = F.getName();
             if (F.getName().starts_with("llvm.dbg.") ||
-                F.getInstructionCount() == 0) {
+                F.getInstructionCount() == 0 || F.isDeclaration() ||
+                F.empty()) {
                 continue;
             }
             auto& LVA = FAM.getResult<LazyValueAnalysis>(F);
-            const auto IAResults = analyze(F, IntervalAnalysis(F));
+            const auto IAResults =
+                analyze(F, IntervalAnalysis(F),
+                        std::make_optional(IntervalAnalysis::getStartFact(F)));
             // analysis2Cfg(outs(), IAResults, F);
             const auto AnalysisResult =
                 analyze(F, NullAbstractInterpretation(LVA, IAResults, M, F));
@@ -169,8 +174,20 @@ llvmGetPassPluginInfo()
             .PluginName = "NullCheckPass",
             .PluginVersion = "v0.1",
             .RegisterPassBuilderCallbacks = [](PassBuilder& PB) {
-                PB.registerOptimizerEarlyEPCallback(
+                // for usage with opt
+                PB.registerPipelineParsingCallback(
+                    [](auto Name, ModulePassManager& PM,
+                       auto /* PipelineElement*/) {
+                        if (Name == "null-check") {
+                            PM.addPass(NullCheckPass{});
+                            return true;
+                        }
+                        return false;
+                    });
+                PB.registerOptimizerLastEPCallback(
                     [](ModulePassManager& PM, OptimizationLevel /* Level */) {
+                        // PM.addPass(createModuleToFunctionPassAdaptor(
+                        //     llvm::createPromoteMemoryToRegisterPass()));
                         PM.addPass(NullCheckPass{});
                     });
             }};

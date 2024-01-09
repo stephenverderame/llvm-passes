@@ -69,16 +69,16 @@
                 "-fexceptions",
                 "-fcolor-diagnostics",
                 // PASS TO DEBUG
-                "-fpass-plugin=./build/ive/InductionVariableElimination.so",
+                "-fpass-plugin=./build/null-check/NullCheck.so",
                 "-faddrsig",
                 "-D__GCC_HAVE_DWARF2_CFI_ASM=1",
                 "-o",
                 "/tmp/alloc-e7e8b1.o",
                 "-x",
                 "c++",
-                "-O1",
+                "-O0",
                 // FILE TO DEBUG
-                "./test/ive/Nested1.cc",
+                "./test/null-check/passes/Argc.cc",
             ],
             "cwd": "${workspaceFolder}"
         },
@@ -89,12 +89,12 @@
             "program": "/usr/lib/llvm-17/bin/opt",
             "args": [
                 "-load-pass-plugin",
-                "./build/ive/InductionVariableElimination.so",
-                "-ive-print",
+                "./build/null-check/NullCheck.so",
+                // "-ive-print",
                 // "-ive-debug",
-                "-passes=ive",
+                "-passes=null-check",
                 // FILE TO DEBUG
-                "./test/ive/s126.ll",
+                "./test/null-check/sort_bad2_stack.ll",
                 "-o",
                 "/dev/null",
             ],

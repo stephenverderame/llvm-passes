@@ -55,6 +55,11 @@ concept Direction = requires(T) {
     {
         T::end(std::declval<const llvm::BasicBlock&>())
     } -> std::incrementable;
+
+    {
+        T::startBlocks(std::declval<const llvm::Function&>())
+    } -> std::same_as<
+        std::vector<std::reference_wrapper<const llvm::BasicBlock>>>;
 };
 
 /**
@@ -88,7 +93,7 @@ template <typename T>
 concept Fact = requires(const T& t) {
     /**
      * @brief Greatest lower bound of two facts.
-     * @param A The first fact
+     * @param A The first (prexisting) fact
      * @param B The second fact
      */
     {
@@ -133,6 +138,12 @@ struct Forwards {
     {
         return BB.end();
     }
+
+    [[nodiscard]] static auto startBlocks(const llvm::Function& Fn)
+    {
+        return std::vector<std::reference_wrapper<const llvm::BasicBlock>>{
+            Fn.getEntryBlock()};
+    }
 };
 
 static_assert(Direction<Forwards>);
@@ -155,6 +166,17 @@ struct Backwards {
     [[nodiscard]] static auto end(const llvm::BasicBlock& BB)
     {
         return BB.rend();
+    }
+
+    [[nodiscard]] static auto startBlocks(const llvm::Function& Fn)
+    {
+        std::vector<std::reference_wrapper<const llvm::BasicBlock>> StartBlocks;
+        for (auto& BB : Fn) {
+            if (llvm::succ_begin(&BB) == llvm::succ_end(&BB)) {
+                StartBlocks.emplace_back(BB);
+            }
+        }
+        return StartBlocks;
     }
 };
 
@@ -206,10 +228,13 @@ DataFlowFacts<F> broadcastOutFacts(const llvm::BasicBlock& BB,
  * @tparam F
  * @param Func The function to analyze.
  * @param Top The top element of the lattice.
+ * @param StartFacts The incoming facts to all start blocks. If not provided,
+ * all start blocks will be initialized to `Top`.
  * @return DataFlowFacts<F>
  */
 template <Fact F>
-DataFlowFacts<F> analyze(const llvm::Function& Func, F Top)
+DataFlowFacts<F> analyze(const llvm::Function& Func, F Top,
+                         std::optional<F> StartFacts = std::nullopt)
 {
     using Dir = typename F::Dir;
     DataFlowFacts<F> Facts;
@@ -217,6 +242,11 @@ DataFlowFacts<F> analyze(const llvm::Function& Func, F Top)
     for (const auto& BB : Func) {
         for (const auto& I : BB) {
             Facts.InstructionInFacts.emplace(&I, Top);
+        }
+    }
+    for (auto BB : Dir::startBlocks(Func)) {
+        if (StartFacts.has_value()) {
+            Facts.InstructionInFacts.at(&*Dir::begin(BB)) = StartFacts.value();
         }
         Worklist.emplace_back(BB);
     }
@@ -310,7 +340,8 @@ std::tuple<F, F> getCondFacts(const F& Self, const llvm::Value* Cond,
                 NonConstBlock = B;
             }
         }
-        if (Const.has_value() && NonConstUse != nullptr) {
+        if (Const.has_value() && NonConstUse != nullptr &&
+            Facts.BlockOutFacts.contains(NonConstBlock)) {
             // phi node of [false, ] and [other,]
             // so if the true branch is taken, we can assume the `other` value
             // is true

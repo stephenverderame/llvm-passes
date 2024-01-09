@@ -147,18 +147,19 @@ TransferRet NullAbstractInterpretation::transferPhi(const PHINode* Phi) const
         return *this;
     }
     auto Res = *this;
-    std::optional<std::shared_ptr<PtrAbstractValue>> PhiRes;
+    // initally TOP
+    auto PhiRes = std::make_shared<PtrAbstractValue>();
     for (const auto& V : Phi->incoming_values()) {
-        const auto& VState = Res.State_.at(V);
-        if (PhiRes.has_value()) {
-            PhiRes.value() = std::make_shared<PtrAbstractValue>(
-                Res.meetVal(*PhiRes.value(), *VState, Res));
-        } else {
-            PhiRes = VState;
-        }
+        const auto& VState = [&Res, &V]() {
+            if (Res.State_.contains(V)) {
+                return Res.State_.at(V);
+            } else {
+                return std::make_shared<PtrAbstractValue>();
+            }
+        }();
+        *PhiRes = Res.meetVal(*PhiRes, *VState, Res);
     }
-    // assumes that the phi node has at least one incoming value
-    Res.State_[Phi] = PhiRes.value();
+    Res.State_[Phi] = PhiRes;
     Res.DebugNames_[Phi] = getDebugName(Phi);
     return Res;
 }
@@ -257,7 +258,15 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
     } else {
         Bottom = true;
     }
-    if (!Bottom) {
+    if (Bottom) {
+        if (Res.State_.contains(GEP)) {
+            Res.State_.at(GEP)->nullify();
+        } else {
+            Res.State_.emplace(GEP,
+                               PtrAbstractValue::make(NullState::MaybeNull));
+            Res.DebugNames_[GEP] = getDebugName(GEP);
+        }
+    } else {
         const auto DataPtr = Res.State_.at(BasePtr)->Data;
         Res.State_[GEP] =
             DataPtr ? DataPtr : PtrAbstractValue::make(NullState::NonNull);

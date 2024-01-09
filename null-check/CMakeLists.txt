@@ -8,3 +8,6 @@ add_llvm_pass_plugin(NullCheck
     src/IntRange.cpp
     src/Bound.cpp
 )
+
+target_link_directories(NullCheck PUBLIC /usr/lib)
+target_link_libraries(NullCheck PUBLIC libz3.so)

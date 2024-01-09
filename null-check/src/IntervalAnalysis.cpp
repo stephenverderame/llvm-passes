@@ -12,7 +12,9 @@
 #include <llvm/ADT/SmallString.h>
 
 #include <memory>
+#include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "df/DataFlow.hpp"
 #include "df/LatticeElem.hpp"
@@ -65,6 +67,35 @@ IntervalAnalysis IntervalAnalysis::meet(const IntervalAnalysis& A,
             Res.putRange(Val, Range);
         }
     }
+    // for (const auto [Val, Ver] : B.VersionNumbers_) {
+    //     if (Res.VersionNumbers_.contains(Val)) {
+    //         Res.VersionNumbers_[Val] =
+    //             std::max(Res.VersionNumbers_.at(Val), Ver);
+    //     } else {
+    //         Res.VersionNumbers_[Val] = Ver;
+    //     }
+    // }
+    // if (A.Constraints_.empty()) {
+    //     Res.Constraints_ = B.Constraints_;
+    // } else if (!B.Constraints_.empty()) {
+    //     // if b constraints are empty then we just keep the constraints from
+    //     a auto i = 0; for (; i < std::min(A.Constraints_.size(),
+    //     B.Constraints_.size());
+    //          ++i) {
+    //         // ptr equality to determine if constraints are the same
+    //         if (A.Constraints_[i].get() != B.Constraints_[i].get()) {
+    //             break;
+    //         }
+    //     }
+    //     Res.Constraints_.resize(i + 1);
+    // }
+    // for (const auto& [Val, Z3Var] : B.Z3Vars_) {
+    //     if (Res.Z3Vars_.contains(Val)) {
+    //         Res.newZ3Var(Val);
+    //     } else {
+    //         Res.Z3Vars_.emplace(Val, Z3Var);
+    //     }
+    // }
     for (const auto& [Val, Name] : B.DebugNames_) {
         if (!Res.DebugNames_.contains(Val)) {
             Res.DebugNames_[Val] = Name;
@@ -90,7 +121,7 @@ TransferRet IntervalAnalysis::transferAlloca(
     if (!Alloca->getAllocatedType()->isIntegerTy()) {
         return Res;
     }
-    Res.putRange(Alloca, SingleFact::makeBottom());
+    Res.putRange(Alloca, SingleFact::makeTop());
     return Res;
 }
 
@@ -167,24 +198,43 @@ TransferRet IntervalAnalysis::transferBinOp(const BinaryOperator* BinOp) const
     const auto& LHS = Res.getRange(BinOp->getOperand(0));
     const auto& RHS = Res.getRange(BinOp->getOperand(1));
     const auto BitWidth = BinOp->getType()->getIntegerBitWidth();
+    const auto DebugName = getDebugName(BinOp);
     switch (BinOp->getOpcode()) {
         case Instruction::Add:
             Res.putRange(BinOp, SingleFact::meet(
                                     LHS, RHS, [](const auto& L, const auto& R) {
                                         return L + R;
                                     }));
+            Res.addConstraint(
+                BinOp,
+                [](const auto& Z3Var, const auto& LHS, const auto& RHS) {
+                    return Z3Var == LHS + RHS;
+                },
+                BinOp->getOperand(0), BinOp->getOperand(1));
             break;
         case Instruction::Mul:
             Res.putRange(BinOp, SingleFact::meet(
                                     LHS, RHS, [](const auto& L, const auto& R) {
                                         return L * R;
                                     }));
+            Res.addConstraint(
+                BinOp,
+                [](const auto& Z3Var, const auto& LHS, const auto& RHS) {
+                    return Z3Var == LHS * RHS;
+                },
+                BinOp->getOperand(0), BinOp->getOperand(1));
             break;
         case Instruction::Sub:
             Res.putRange(BinOp, SingleFact::meet(
                                     LHS, RHS, [](const auto& L, const auto& R) {
                                         return L - R;
                                     }));
+            Res.addConstraint(
+                BinOp,
+                [](const auto& Z3Var, const auto& LHS, const auto& RHS) {
+                    return Z3Var == LHS - RHS;
+                },
+                BinOp->getOperand(0), BinOp->getOperand(1));
             break;
         case Instruction::SDiv:
             Res.putRange(
@@ -194,6 +244,12 @@ TransferRet IntervalAnalysis::transferBinOp(const BinaryOperator* BinOp) const
                 }).apply([BitWidth](const auto& R) {
                     return R.toSigned(BitWidth);
                 }));
+            Res.addConstraint(
+                BinOp,
+                [](const auto& Z3Var, const auto& LHS, const auto& RHS) {
+                    return Z3Var == LHS / RHS;
+                },
+                BinOp->getOperand(0), BinOp->getOperand(1));
             break;
         case Instruction::UDiv:
             Res.putRange(
@@ -203,6 +259,12 @@ TransferRet IntervalAnalysis::transferBinOp(const BinaryOperator* BinOp) const
                 }).apply([BitWidth](const auto& R) {
                     return R.toUnsigned(BitWidth);
                 }));
+            Res.addConstraint(
+                BinOp,
+                [](const auto& Z3Var, const auto& LHS, const auto& RHS) {
+                    return Z3Var == LHS / RHS;
+                },
+                BinOp->getOperand(0), BinOp->getOperand(1));
             break;
         case Instruction::URem:
             Res.putRange(BinOp, SingleFact::meet(
@@ -237,7 +299,7 @@ TransferRet IntervalAnalysis::transferBinOp(const BinaryOperator* BinOp) const
                                         return L / R.exponentiate(bigint(2));
                                     }));
         default:
-            Res.putRange(BinOp, SingleFact::makeBottom());
+            Res.putRange(BinOp, SingleFact(IntRange::makeUnbounded()));
             break;
     }
     return Res;
@@ -287,7 +349,54 @@ TransferRet IntervalAnalysis::transferStore(const StoreInst* Store) const
     } else {
         Res.putRange(Ptr, ValRange);
     }
+    Res.newZ3Var(Ptr);
+    Res.addConstraint(
+        Ptr, [](const auto& Z3Var, const auto& Val) { return Z3Var == Val; },
+        Val);
     return Res;
+}
+
+/**
+ * Determines if the instruction produces a new value which is not equivalent
+ * to its arguments.
+ */
+bool isMutatingInstruction(const llvm::User* I)
+{
+    return dyn_cast<PHINode>(I) == nullptr && dyn_cast<CastInst>(I) == nullptr;
+}
+
+/**
+ * @brief Determines of `V` is dependent on `Other` and the dependency chain
+ * between them contains a mutating instruction.
+ *
+ * @param V
+ * @param Other
+ * @param Ret
+ * @return true
+ * @return false
+ */
+bool isDependentOn(const llvm::Value* V, const llvm::Value* Other)
+{
+    std::queue<std::pair<const llvm::Value*, bool>> Worklist;
+    std::unordered_set<const llvm::Value*> Visited;
+    Worklist.push(std::make_pair(Other, false));
+    while (!Worklist.empty()) {
+        const auto [Curr, CurrIsMut] = Worklist.front();
+        if (Curr == V) {
+            return CurrIsMut;
+        }
+        Worklist.pop();
+        Visited.emplace(Curr);
+        for (const auto& Op : Curr->uses()) {
+            const auto U = Op.getUser();
+            if (Visited.contains(U)) {
+                continue;
+            }
+            Worklist.push(
+                std::make_pair(U, CurrIsMut || isMutatingInstruction(U)));
+        }
+    }
+    return false;
 }
 
 TransferRet IntervalAnalysis::transferPhi(const PHINode* Phi) const
@@ -300,39 +409,21 @@ TransferRet IntervalAnalysis::transferPhi(const PHINode* Phi) const
     if (NumIncoming == 0) {
         return Res;
     }
-    const auto SetIsMutating = [Phi](auto& Range, auto Idx) {
-        if (Range.hasValue()) {
-            const auto Incoming = Phi->getIncomingValue(Idx);
-            for (const auto& Use : Incoming->uses()) {
-                if (Use == Phi) {
-                    // incoming node depends on this phi node -> loop
-                    // and mutation
-                    Range.value().Mutated = true;
-                    break;
-                }
-            }
-        }
-    };
-    auto& PhiRange = Res.getRange(Phi->getIncomingValue(0));
-    SetIsMutating(PhiRange, 0);
+    const auto DebugName = getDebugName(Phi);
+    auto PhiRange = Res.getRange(Phi->getIncomingValue(0));
+    if (PhiRange.hasValue() && isDependentOn(Phi->getIncomingValue(0), Phi)) {
+        PhiRange.value().Mutated = true;
+    }
     for (unsigned int Idx = 1; Idx < NumIncoming; ++Idx) {
         auto& IncomingRangeI = Res.getRange(Phi->getIncomingValue(Idx));
-        SetIsMutating(IncomingRangeI, Idx);
+        if (IncomingRangeI.hasValue() &&
+            isDependentOn(Phi->getIncomingValue(Idx), Phi)) {
+            IncomingRangeI.value().Mutated = true;
+        }
         PhiRange = SingleFact::meet(PhiRange, IncomingRangeI, IntRange::meet);
     }
     Res.putRange(Phi, PhiRange);
     return Res;
-}
-
-const Value* getOriginal(const Value* V)
-{
-    if (const auto Cast = dyn_cast<CastInst>(V); Cast != nullptr) {
-        return getOriginal(Cast->getOperand(0));
-    } else if (const auto Load = dyn_cast<LoadInst>(V); Load != nullptr) {
-        return Load->getPointerOperand();
-    } else {
-        return V;
-    }
 }
 
 /**
@@ -368,14 +459,30 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
         case ICmpInst::ICMP_EQ:
             TRes.putRange(LHS,
                           SingleFact::join(RHSRange, LHSRange, smallerRange));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var == RHS; },
+                RHS);
             TRes.putRange(RHS,
                           SingleFact::join(LHSRange, RHSRange, smallerRange));
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var != RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_NE:
             FRes.putRange(LHS,
                           SingleFact::join(RHSRange, LHSRange, smallerRange));
             FRes.putRange(LHS,
                           SingleFact::join(LHSRange, RHSRange, smallerRange));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var != RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var == RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_SLT:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -386,6 +493,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_SGT));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_SLE));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var < RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var >= RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_ULT:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -396,6 +511,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_UGT));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_ULE));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var < RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var >= RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_SGT:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -406,6 +529,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_SLT));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_SGE));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var > RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var <= RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_UGT:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -416,6 +547,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_ULT));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_UGE));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var > RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var <= RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_SLE:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -426,6 +565,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_SGE));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_SLT));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var <= RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var > RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_ULE:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -436,6 +583,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_UGE));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_ULT));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var <= RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var > RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_SGE:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -446,6 +601,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_SLE));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_SGT));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var >= RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var < RHS; },
+                RHS);
             break;
         case ICmpInst::ICMP_UGE:
             TRes.putRange(LHS, adjustForCondition(LHSRange, RHSRange, BitWidth,
@@ -456,6 +619,14 @@ std::tuple<IntervalAnalysis, IntervalAnalysis> IntervalAnalysis::transferCmp(
                                                   ICmpInst::ICMP_ULE));
             FRes.putRange(RHS, adjustForCondition(RHSRange, LHSRange, BitWidth,
                                                   ICmpInst::ICMP_UGT));
+            TRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var >= RHS; },
+                RHS);
+            FRes.addConstraint(
+                LHS,
+                [](const auto& Z3Var, const auto& RHS) { return Z3Var < RHS; },
+                RHS);
             break;
         default:
             break;
@@ -492,7 +663,7 @@ TransferRet IntervalAnalysis::transferCall(const CallInst* Call) const
             Res.putRange(Call,
                          SingleFact(IntRange(bigint(0), bigint(RAND_MAX))));
         } else {
-            Res.putRange(Call, SingleFact::makeBottom());
+            Res.putRange(Call, SingleFact(IntRange::makeUnbounded()));
         }
     }
     return Res;
@@ -575,11 +746,63 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
 }
 
 IntervalAnalysis::IntervalAnalysis(const llvm::Function& F)
+    : Z3Context_(std::make_shared<z3::context>())
 {
     for (const auto& Arg : F.args()) {
         if (Arg.getType()->isIntegerTy()) {
-            putRange(&Arg, SingleFact::makeBottom());
+            putRange(&Arg, SingleFact::makeTop());
             DebugNames_[&Arg] = getDebugName(&Arg);
         }
     }
+}
+
+IntervalAnalysis IntervalAnalysis::getStartFact(const llvm::Function& F)
+{
+    auto Res = IntervalAnalysis(F);
+    for (const auto& Arg : F.args()) {
+        if (Arg.getType()->isIntegerTy()) {
+            Res.putRange(&Arg, SingleFact(IntRange::makeUnbounded()));
+            Res.DebugNames_[&Arg] = getDebugName(&Arg);
+        }
+    }
+    return Res;
+}
+
+/** @brief  Gets the latest Z3 variable for a given value.
+ * @param V the value to gat the variable for, the canonical value of `V`
+ * will be used.
+ * @return the latest Z3 variable for `V`
+ */
+z3::expr IntervalAnalysis::getZ3Var(const llvm::Value* V)
+{
+    const auto CV = getCanonicalValue(V);
+    if (!VersionNumbers_.contains(CV)) {
+        VersionNumbers_.emplace(CV, 0);
+    }
+    std::stringstream NameStream;
+    NameStream << "t" << static_cast<const void*>(CV) << "."
+               << VersionNumbers_.at(CV);
+    if (!Z3Vars_.contains(CV)) {
+        Z3Vars_.emplace(CV, Z3Context_->int_const(NameStream.str().c_str()));
+    }
+    return Z3Vars_.at(CV);
+}
+
+/**
+ * @brief Creates a new Z3 variable for `V` and increments the version number.
+ * This operation models an update to the canonical value of `V` or a brand new
+ * allocation of `V`.
+ */
+void IntervalAnalysis::newZ3Var(const llvm::Value* V)
+{
+    const auto CV = getCanonicalValue(V);
+    if (VersionNumbers_.find(CV) != VersionNumbers_.end()) {
+        VersionNumbers_.at(CV)++;
+    } else {
+        VersionNumbers_.emplace(CV, 0);
+    }
+    std::stringstream NameStream;
+    NameStream << "t" << static_cast<const void*>(CV) << "."
+               << VersionNumbers_.at(CV);
+    Z3Vars_.emplace(CV, Z3Context_->int_const(NameStream.str().c_str()));
 }
