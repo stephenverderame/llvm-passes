@@ -36,19 +36,6 @@ class IntervalAnalysis
      * @brief Mapping from syntactic values to their ranges.
      */
     std::unordered_map<const llvm::Value*, SingleFact> Ranges_;
-    /**
-     * @brief Mapping from values to their latest Z3 variables.
-     */
-    std::unordered_map<const llvm::Value*, z3::expr> Z3Vars_;
-    /**
-     * @brief Mapping from canonical values to their version numbers.
-     */
-    mutable std::unordered_map<const llvm::Value*, uint64_t> VersionNumbers_;
-    /** List of constraints on z3 variables */
-    std::vector<std::shared_ptr<z3::expr>> Constraints_;
-
-    /** @brief Z3 context */
-    std::shared_ptr<z3::context> Z3Context_;
 
     /** @brief String representation of values for debugging */
     mutable std::unordered_map<const llvm::Value*, std::string> DebugNames_;
@@ -74,26 +61,6 @@ class IntervalAnalysis
 
     friend llvm::raw_ostream& operator<<(llvm::raw_ostream& Stream,
                                          const IntervalAnalysis& Analysis);
-
-    /**
-     * @brief  Adds a constraint to the analysis.
-     * @tparam F callable object which returns a z3::expr and takes a
-     * z3::expr as its first argument, and a variadic number of z3::exprs as
-     * its remaining arguments. The first argument will be the z3 variable for
-     * the value that the constraint is being added for, and the remaining
-     * arguments will be the z3 variables for the values that the constraint
-     * depends on.
-     */
-    template <typename F, typename... Vals>
-    void addConstraint(const llvm::Value* V, F&& C, const Vals*... Vs)
-    {
-        const auto Z3Var = getZ3Var(V);
-        Constraints_.emplace_back(
-            std::make_shared<z3::expr>(C(Z3Var, getZ3Var(Vs)...)));
-    }
-
-    z3::expr getZ3Var(const llvm::Value* V);
-    void newZ3Var(const llvm::Value* V);
 
   public:
     /// @see Fact::meet

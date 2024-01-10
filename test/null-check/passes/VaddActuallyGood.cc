@@ -28,6 +28,9 @@ int main(int argc, const char** argv)
 
     int c[128];
     for (int i = 0; i < arr_count / 2; ++i) {
+        // suppose argc is -20
+        // we would never enter this loop
+        // so arr_count must be positive, hence this is safe
         c[i] = buf[i] + buf[i + arr_count / 2];
     }
 

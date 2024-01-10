@@ -78,7 +78,7 @@
                 "c++",
                 "-O0",
                 // FILE TO DEBUG
-                "./test/null-check/passes/Argc.cc",
+                "./test/null-check/violations/SortBad3.cc",
             ],
             "cwd": "${workspaceFolder}"
         },
@@ -94,7 +94,7 @@
                 // "-ive-debug",
                 "-passes=null-check",
                 // FILE TO DEBUG
-                "./test/null-check/sort_bad2_stack.ll",
+                "./test/null-check/sort_bad3.ll",
                 "-o",
                 "/dev/null",
             ],

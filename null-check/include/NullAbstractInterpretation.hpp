@@ -10,6 +10,7 @@
 #include <unordered_set>
 
 #include "IntervalAnalysis.hpp"
+#include "KnowledgeGraph.hpp"
 #include "df/DataFlow.hpp"
 
 /**
@@ -143,6 +144,7 @@ class NullAbstractInterpretation
     std::reference_wrapper<llvm::LazyValueInfo> LVA_;
     std::reference_wrapper<const DataFlowFacts<IntervalAnalysis>>
         IntervalFacts_;
+    std::reference_wrapper<const InequalitySolver> Solver_;
 
     std::shared_ptr<llvm::DataLayout> DL_;
 
@@ -212,7 +214,8 @@ class NullAbstractInterpretation
     NullAbstractInterpretation(
         llvm::LazyValueInfo& LVA,
         const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
-        const llvm::Module& M, const llvm::Function& F);
+        const InequalitySolver& Solver, const llvm::Module& M,
+        const llvm::Function& F);
     NullAbstractInterpretation(NullAbstractInterpretation&&) = default;
     NullAbstractInterpretation& operator=(NullAbstractInterpretation&&) =
         default;

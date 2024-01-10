@@ -221,11 +221,13 @@ bool NullAbstractInterpretation::inRange(const Use& Val,
             IntervalFacts_.get().InstructionInFacts.at(Inst).getValRange(Val);
         if (Interval.has_value()) {
             const auto IntVal = Interval.value();
-            return !(IntVal.Lower.isNegative() ||
-                     IntVal.Upper >=
-                         bound::Bound(bigint(std::to_string(Size))));
+            if (!(IntVal.Lower.isNegative() ||
+                  IntVal.Upper >= bound::Bound(bigint(std::to_string(Size))))) {
+                return true;
+            }
         }
-        return false;
+        const auto DebugName = getDebugName(Val);
+        return Solver_.get().isAlwaysInRange(Inst, Val, bigint(Size));
     } else {
         return true;
     }
@@ -465,7 +467,8 @@ NullAbstractInterpretation::NullAbstractInterpretation(
       DebugNames_(Other.DebugNames_),
       LVA_(Other.LVA_),
       DL_(Other.DL_),
-      IntervalFacts_(Other.IntervalFacts_)
+      IntervalFacts_(Other.IntervalFacts_),
+      Solver_(Other.Solver_)
 {
     std::unordered_map<const PtrAbstractValue*,
                        std::shared_ptr<PtrAbstractValue>>
@@ -486,13 +489,15 @@ NullAbstractInterpretation& NullAbstractInterpretation::operator=(
 
 NullAbstractInterpretation::NullAbstractInterpretation(
     llvm::LazyValueInfo& LVA,
-    const DataFlowFacts<IntervalAnalysis>& IntervalFacts, const llvm::Module& M,
+    const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
+    const InequalitySolver& Solver, const llvm::Module& M,
     const llvm::Function& F)
     : State_(),
       DebugNames_(),
       LVA_(LVA),
       DL_(std::make_shared<llvm::DataLayout>(&M)),
-      IntervalFacts_(IntervalFacts)
+      IntervalFacts_(IntervalFacts),
+      Solver_(Solver)
 {
     for (const auto& Arg : F.args()) {
         if (auto PtrType = dyn_cast<PointerType>(Arg.getType());

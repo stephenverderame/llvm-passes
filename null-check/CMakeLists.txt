@@ -7,6 +7,7 @@ add_llvm_pass_plugin(NullCheck
     src/IntervalAnalysis.cpp
     src/IntRange.cpp
     src/Bound.cpp
+    src/KnowledgeGraph.cpp
 )
 
 target_link_directories(NullCheck PUBLIC /usr/lib)

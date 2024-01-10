@@ -153,9 +153,11 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
             const auto IAResults =
                 analyze(F, IntervalAnalysis(F),
                         std::make_optional(IntervalAnalysis::getStartFact(F)));
+            const auto Relations = analyze(F, RelationPropagation{});
+            const auto Solver = InequalitySolver(IAResults, Relations);
             // analysis2Cfg(outs(), IAResults, F);
-            const auto AnalysisResult =
-                analyze(F, NullAbstractInterpretation(LVA, IAResults, M, F));
+            const auto AnalysisResult = analyze(
+                F, NullAbstractInterpretation(LVA, IAResults, Solver, M, F));
             Violation |= checkInstSafety(F, AnalysisResult);
         }
         if (Violation) {

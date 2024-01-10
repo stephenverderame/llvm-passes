@@ -402,12 +402,25 @@ TransferRetType<F> transferConditionDependentBranch(
  */
 inline std::string getDebugName(const llvm::Value* I)
 {
+    if (auto Const = dyn_cast<llvm::Constant>(I); Const != nullptr) {
+        std::string Res;
+        llvm::raw_string_ostream Stream(Res);
+        Const->printAsOperand(Stream, false);
+        return Res;
+    }
     if (I->hasName()) {
-        return I->getName().str();
+        const auto name = I->getName().str();
+        if (name.find_first_of('%') != 0) {
+            return '%' + name;
+        }
+        return name;
     }
     std::string Res;
     llvm::raw_string_ostream Stream(Res);
     I->printAsOperand(Stream, false);
+    if (auto Percent = Res.find_first_of('%'); Percent != 0) {
+        Res = '%' + Res;
+    }
     return Res;
 }
 

@@ -19,7 +19,7 @@ int main(int argc, const char** argv)
             }
         }
     }
-
+    // arg_num could be negative if argc is <= 0
     args[arg_num] = '\0';
 
     printf("%s\n", args);
