@@ -6,6 +6,7 @@
 #include <llvm-17/llvm/Pass.h>
 #include <llvm-17/llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/LazyValueInfo.h>
+#include <llvm/Analysis/MemoryDependenceAnalysis.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>
@@ -207,7 +208,7 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
                 F.empty()) {
                 continue;
             }
-            auto& LVA = FAM.getResult<LazyValueAnalysis>(F);
+            auto& TLInfo = FAM.getResult<TargetLibraryAnalysis>(F);
             const auto IAResults =
                 analyze(F, IntervalAnalysis(F),
                         std::make_optional(IntervalAnalysis::getStartFact(F)));
@@ -215,7 +216,7 @@ struct NullCheckPass : public PassInfoMixin<NullCheckPass> {
             const auto Solver = InequalitySolver(IAResults, Relations);
             // analysis2Cfg(outs(), IAResults, F);
             const auto AnalysisResult = analyze(
-                F, NullAbstractInterpretation(LVA, IAResults, Solver, M, F));
+                F, NullAbstractInterpretation(TLInfo, IAResults, Solver, M, F));
             Violation |= checkInstSafety(F, AnalysisResult);
         }
         if (Violation) {
@@ -246,8 +247,6 @@ llvmGetPassPluginInfo()
                     });
                 PB.registerOptimizerLastEPCallback(
                     [](ModulePassManager& PM, OptimizationLevel /* Level */) {
-                        // PM.addPass(createModuleToFunctionPassAdaptor(
-                        //     llvm::createPromoteMemoryToRegisterPass()));
                         PM.addPass(NullCheckPass{});
                     });
             }};

@@ -157,12 +157,12 @@ class NullAbstractInterpretation
     /// which shows why the GEP is null.
     std::unordered_map<const llvm::Value*, QueryResult> FailedRanges_;
 
-    std::reference_wrapper<llvm::LazyValueInfo> LVA_;
     std::reference_wrapper<const DataFlowFacts<IntervalAnalysis>>
         IntervalFacts_;
     std::reference_wrapper<const InequalitySolver> Solver_;
 
     std::shared_ptr<llvm::DataLayout> DL_;
+    std::reference_wrapper<llvm::TargetLibraryInfo> TLI_;
 
   private:
     // docs in src for private methods
@@ -244,7 +244,7 @@ class NullAbstractInterpretation
      * @param M The module the function we are analyzing is in
      */
     NullAbstractInterpretation(
-        llvm::LazyValueInfo& LVA,
+        llvm::TargetLibraryInfo& TLInfo,
         const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
         const InequalitySolver& Solver, const llvm::Module& M,
         const llvm::Function& F);

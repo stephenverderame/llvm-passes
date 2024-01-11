@@ -6,6 +6,7 @@
 #include <llvm-17/llvm/IR/Instructions.h>
 #include <llvm-17/llvm/Support/Casting.h>
 #include <llvm/Analysis/LazyValueInfo.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 
 #include <cstddef>
 #include <optional>
@@ -240,6 +241,9 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
     const auto ReturnType = Call->getType();
     auto Res = *this;
     const auto Name = Call->getCalledFunction()->getName().str();
+
+    llvm::LibFunc LF;
+    const auto IsLibFunc = TLI_.get().getLibFunc(*Call, LF);
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
@@ -250,13 +254,16 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
                             : DerefBytes);
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
-        if (Name == "malloc") {
+        if (IsLibFunc &&
+            (LF == llvm::LibFunc_Znwm || LF == llvm::LibFunc_Znam ||
+             LF == llvm::LibFunc_malloc)) {
             assert(Call->arg_size() == 1);
             Val->Size = LatticeElem<LinExpr>(
                 LinExpr(AbstractInt(Call->getArgOperand(0))));
         }
     }
-    if (Name == "free") {
+    if (IsLibFunc && (LF == llvm::LibFunc_ZdlPv || LF == llvm::LibFunc_ZdaPv ||
+                      LF == llvm::LibFunc_free)) {
         assert(Call->arg_size() == 1);
         const auto Arg = Call->getArgOperand(0);
         if (Res.State_.contains(Arg)) {
@@ -552,7 +559,7 @@ NullAbstractInterpretation::NullAbstractInterpretation(
     const NullAbstractInterpretation& Other)
     : State_(Other.State_.size()),
       DebugNames_(Other.DebugNames_),
-      LVA_(Other.LVA_),
+      TLI_(Other.TLI_),
       DL_(Other.DL_),
       IntervalFacts_(Other.IntervalFacts_),
       Solver_(Other.Solver_),
@@ -577,13 +584,13 @@ NullAbstractInterpretation& NullAbstractInterpretation::operator=(
 }
 
 NullAbstractInterpretation::NullAbstractInterpretation(
-    llvm::LazyValueInfo& LVA,
+    llvm::TargetLibraryInfo& TLI,
     const DataFlowFacts<IntervalAnalysis>& IntervalFacts,
     const InequalitySolver& Solver, const llvm::Module& M,
     const llvm::Function& F)
     : State_(),
       DebugNames_(),
-      LVA_(LVA),
+      TLI_(TLI),
       DL_(std::make_shared<llvm::DataLayout>(&M)),
       IntervalFacts_(IntervalFacts),
       Solver_(Solver)
