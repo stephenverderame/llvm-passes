@@ -1,5 +1,5 @@
-[31mSafety Violation[00m: Use of potentially null pointer in load at MakeVecBad.cc:20
+[31mSafety Violation[00m: Use of potentially null pointer in store at Bad2DArray.cc:19
 Because an index could not be proven to be in range, the following counterexample was found:
 	[1margc[0m = 1
-	[1mdata_args[0m = 0
 	[1mi[0m = 1
+	[1mj[0m = 16385

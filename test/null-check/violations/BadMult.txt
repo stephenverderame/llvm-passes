@@ -1,1 +1,5 @@
 [31mSafety Violation[00m: Use of potentially null pointer in store at BadMult.cc:18
+Because an index could not be proven to be in range, the following counterexample was found:
+	[1melem_size[0m = (- 23)
+	[1mi[0m = 12
+	[1mnum_elems[0m = 12

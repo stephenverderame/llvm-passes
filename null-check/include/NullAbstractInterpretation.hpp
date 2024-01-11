@@ -61,7 +61,7 @@ struct PtrAbstractValue {
         return std::make_shared<PtrAbstractValue>(
             N, Size.has_value()
                    ? LatticeElem<LinExpr>(LinExpr(AbstractInt(Size.value())))
-                   : LatticeElem<LinExpr>::makeBottom());
+                   : LatticeElem<LinExpr>::makeTop());
     }
 
     /**
@@ -83,7 +83,7 @@ struct PtrAbstractValue {
     static auto make(NullState N)
     {
         return std::make_shared<PtrAbstractValue>(
-            N, LatticeElem<LinExpr>::makeBottom());
+            N, LatticeElem<LinExpr>::makeTop());
     }
 
     /**
@@ -153,6 +153,9 @@ class NullAbstractInterpretation
         State_;
     /// Mapping from values to their names (ie. "%0") for debugging
     std::unordered_map<const llvm::Value*, std::string> DebugNames_;
+    /// @brief Mapping from GEPs which are null to an assignment of variables
+    /// which shows why the GEP is null.
+    std::unordered_map<const llvm::Value*, QueryResult> FailedRanges_;
 
     std::reference_wrapper<llvm::LazyValueInfo> LVA_;
     std::reference_wrapper<const DataFlowFacts<IntervalAnalysis>>
@@ -187,8 +190,8 @@ class NullAbstractInterpretation
     PtrAbstractValue meetVal(const PtrAbstractValue& A,
                              const PtrAbstractValue& B,
                              const NullAbstractInterpretation& ContextB);
-    bool inRange(const LinExpr& Idx, const llvm::GetElementPtrInst* Inst,
-                 const LinExpr& Size) const;
+    QueryResult inRange(const LinExpr& Idx, const llvm::Instruction* Inst,
+                        const LinExpr& Size) const;
 
   public:
     /// @see Fact::meet
@@ -212,6 +215,22 @@ class NullAbstractInterpretation
      * @return PtrAbstractValue
      */
     PtrAbstractValue getAbstractVal(const llvm::Value* Value) const;
+
+    /**
+     * @brief If a value is null due to an indexing, returns the reason why it
+     * is null
+     * @return QueryResult or none if no reason is known
+     */
+    std::optional<QueryResult> getFailedRange(const llvm::Value* GEP) const;
+
+    /**
+     * @brief Checks if a load or store instruction is safe against overflow.
+     *
+     * @param I The instruction to check
+     * @return QueryResult which indicates success as true if the instruction is
+     * safe, or false if it is not safe. If the instruction is not safe
+     */
+    QueryResult checkMemOverflow(const llvm::Instruction* I) const;
 
     NullAbstractInterpretation& operator=(
         const NullAbstractInterpretation& Other);

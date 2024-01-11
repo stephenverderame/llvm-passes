@@ -457,9 +457,9 @@ TransferRetType<RelationPropagation> RelationPropagation::transfer(
     return Res;
 }
 
-bool InequalitySolver::isAlwaysInRange(const llvm::Instruction* I,
-                                       const LinExpr& LHS,
-                                       const LinExpr& RHS) const
+QueryResult InequalitySolver::isAlwaysInRange(const llvm::Instruction* I,
+                                              const LinExpr& LHS,
+                                              const LinExpr& RHS) const
 {
     z3::context Ctx;
     const auto& Relations = RelationFacts_.get().InstructionInFacts.at(I);
@@ -497,7 +497,16 @@ bool InequalitySolver::isAlwaysInRange(const llvm::Instruction* I,
     const auto Err = Solver.check_error();
     const auto Ret = Solver.check();
     if (Ret == z3::sat) {
-        const auto DebugModel = Solver.get_model();
+        const auto M = Solver.get_model();
+        std::unordered_map<const llvm::Value*, std::string> Assignments;
+        for (const auto& [K, V] : Vars) {
+            Assignments.emplace(K, M.eval(V).to_string());
+        }
+        std::unordered_map<std::string, std::string> DebugAssignments;
+        for (const auto& [K, V] : Assignments) {
+            DebugAssignments.emplace(getDebugName(K), V);
+        }
+        return {false, Assignments};
     }
-    return Ret == z3::unsat;
+    return {Ret == z3::unsat, {}};
 }

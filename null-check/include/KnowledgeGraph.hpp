@@ -62,6 +62,16 @@ class RelationPropagation
 static_assert(Fact<RelationPropagation>);
 
 /**
+ * @brief Result of a query to the InequalitySolver.
+ */
+struct QueryResult {
+    /// @brief  Whether the query was successful
+    bool Success;
+    /// @brief  If the query was unsuccessful, the counterexample if one exists
+    std::unordered_map<const llvm::Value*, std::string> Cex;
+};
+
+/**
  * @brief Solves symbolic inequalities between integral values.
  */
 class InequalitySolver
@@ -90,6 +100,6 @@ class InequalitySolver
      * @param RHS The right hand side of the inequality
      * @return true if `LHS < RHS` is always true at `I`
      */
-    bool isAlwaysInRange(const llvm::Instruction* I, const LinExpr& LHS,
-                         const LinExpr& RHS) const;
+    QueryResult isAlwaysInRange(const llvm::Instruction* I, const LinExpr& LHS,
+                                const LinExpr& RHS) const;
 };

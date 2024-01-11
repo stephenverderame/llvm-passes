@@ -94,7 +94,7 @@
                 // "-ive-debug",
                 "-passes=null-check",
                 // FILE TO DEBUG
-                "./test/null-check/vec.ll",
+                "./test/null-check/struct.ll",
                 "-o",
                 "/dev/null",
             ],

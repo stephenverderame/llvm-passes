@@ -81,6 +81,50 @@ auto displayDebugInfo(const Instruction& Inst)
 }
 
 /**
+ * @brief Gets the source level variable information for the given value or
+ * returns nullptr if it does not exist.
+ *
+ */
+llvm::DILocalVariable* findVarDebugInfo(const llvm::Value* V,
+                                        const llvm::Function* F)
+{
+    for (const auto& BB : *F) {
+        for (const auto& I : BB) {
+            if (const auto DbgVal = dyn_cast<DbgValueInst>(&I);
+                DbgVal != nullptr) {
+                if (DbgVal->getValue() == V) {
+                    return DbgVal->getVariable();
+                }
+            } else if (const auto DbgDeclare = dyn_cast<DbgDeclareInst>(&I);
+                       DbgDeclare != nullptr) {
+                if (DbgDeclare->getAddress() == V) {
+                    return DbgDeclare->getVariable();
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+void displayQueryFailure(const QueryResult& Result, const llvm::Function* F)
+{
+    std::map<std::string, std::string> VarMap;
+    for (auto& [Val, Assignment] : Result.Cex) {
+        if (const auto Var = findVarDebugInfo(Val, F); Var != nullptr) {
+            VarMap[Var->getName().str()] = Assignment;
+        }
+    }
+    if (VarMap.empty()) {
+        return;
+    }
+    errs() << "Because an index could not be proven to be in range, the "
+              "following counterexample was found:\n";
+    for (auto& [Var, Assignment] : VarMap) {
+        errs() << "\t\033[1m" << Var << "\033[0m = " << Assignment << "\n";
+    }
+}
+
+/**
  * @brief Prints a safety violation message and returns true if the pointer
  * operand of the given instruction is potentially null.
  * Otherwise, returns false.
@@ -102,7 +146,21 @@ auto displayDebugInfo(const Instruction& Inst)
                   "null pointer in "
                << displayUseType(UseType) << " at " << displayDebugInfo(Inst)
                << "\n";
+        if (const auto Result = InFacts.getFailedRange(Ptr);
+            Result.has_value()) {
+            displayQueryFailure(Result.value(), Inst.getFunction());
+        }
         return true;
+    } else {
+        const auto QR = InFacts.checkMemOverflow(&Inst);
+        if (!QR.Success) {
+            errs() << "\033[31mSafety Violation\033[00m: Use of pointer "
+                      "that may overflow in "
+                   << displayUseType(UseType) << " at "
+                   << displayDebugInfo(Inst) << "\n";
+            displayQueryFailure(QR, Inst.getFunction());
+            return true;
+        }
     }
     return false;
 }

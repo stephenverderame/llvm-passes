@@ -55,18 +55,45 @@ std::optional<int64_t> getPointeeBytes(llvm::Type* T, const DataLayout* DL)
  */
 auto indexExpr(const llvm::GetElementPtrInst* GEP, const llvm::DataLayout* DL)
 {
-    // TODO: structures and 2d arrays
+    // TODO: more complicated GEPs
+    assert(GEP->getNumIndices() <= 2);  // TODO
     auto Res = LinExpr(AbstractInt(int64_t(0)));
-    const auto Size = [&]() {
-        if (GEP->getSourceElementType()->isArrayTy()) {
-            return getSizeInBytes(
-                GEP->getSourceElementType()->getArrayElementType(), DL);
-        } else {
-            return getSizeInBytes(GEP->getSourceElementType(), DL);
-        }
-    }();
+    const auto NumIndices = GEP->getNumIndices();
+    std::vector<const llvm::Value*> Indices;
     for (const auto& Idx : GEP->indices()) {
-        Res.addOffset(Size, AbstractInt(Idx));
+        Indices.push_back(Idx);
+    }
+    if (NumIndices > 0) {
+        // first index is an index into the pointer itself
+        // ex: if the pointer is an array that has decayed into a pointer
+        Res.addOffset(getSizeInBytes(GEP->getSourceElementType(), DL),
+                      AbstractInt(Indices[0]));
+    }
+    if (NumIndices > 1) {
+        // second index is an index into the pointed to object
+        // note that no loads or stores are being done in the GEP
+        const auto Index2 = Indices[1];
+        if (GEP->getSourceElementType()->isStructTy()) {
+            if (const auto Const = dyn_cast<ConstantInt>(Index2);
+                Const != nullptr) {
+                const auto OffsetInt = Const->getZExtValue();
+                int64_t TotalSize = 0;
+                for (size_t i = 0; i < OffsetInt; ++i) {
+                    TotalSize += getSizeInBytes(
+                        GEP->getSourceElementType()->getStructElementType(i),
+                        DL);
+                }
+                Res.addOffset(1, AbstractInt(TotalSize));
+            } else {
+                llvm_unreachable("Variable struct index");
+            }
+        } else if (GEP->getSourceElementType()->isArrayTy()) {
+            const auto Size = getSizeInBytes(
+                GEP->getSourceElementType()->getArrayElementType(), DL);
+            Res.addOffset(Size, AbstractInt(Index2));
+        } else {
+            llvm_unreachable("Unsupported GEP");
+        }
     }
     return Res;
 }
@@ -269,9 +296,9 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
  * @return true if all possible values of the given value is in range of `0` to
  * `Size`
  */
-bool NullAbstractInterpretation::inRange(const LinExpr& Idx,
-                                         const llvm::GetElementPtrInst* Inst,
-                                         const LinExpr& Size) const
+QueryResult NullAbstractInterpretation::inRange(const LinExpr& Idx,
+                                                const llvm::Instruction* Inst,
+                                                const LinExpr& Size) const
 {
     const auto IdxRange =
         exprToRange(Idx, IntervalFacts_.get().InstructionInFacts.at(Inst));
@@ -280,7 +307,7 @@ bool NullAbstractInterpretation::inRange(const LinExpr& Idx,
     if (IdxRange.has_value() && SizeRange.has_value()) {
         if (IdxRange.value().isNonNegative() &&
             IdxRange.value().Upper < SizeRange.value().Lower) {
-            return true;
+            return {true, {}};
         }
     }
     const auto DebugName = getDebugName(Inst);
@@ -298,9 +325,14 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
     if (auto It = Res.State_.find(BasePtr); It != Res.State_.end()) {
         const auto& BaseAbstractVal = *It->second;
         if (BaseAbstractVal.Size.hasValue()) {
-            if (inRange(Idx, GEP, BaseAbstractVal.Size.value())) {
+            if (const auto R = inRange(Idx, GEP, BaseAbstractVal.Size.value());
+                R.Success) {
                 Bottom = false;
+            } else {
+                Res.FailedRanges_[GEP] = R;
             }
+        } else if (Res.FailedRanges_.contains(BasePtr)) {
+            Res.FailedRanges_[GEP] = Res.FailedRanges_.at(BasePtr);
         }
     }
     if (Bottom) {
@@ -309,6 +341,10 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
         } else {
             Res.State_.emplace(GEP,
                                PtrAbstractValue::make(NullState::MaybeNull));
+            if (Res.State_.contains(BasePtr)) {
+                Res.State_.at(GEP)->Size = Res.State_.at(BasePtr)->Size.apply(
+                    [Idx](const auto& Size) { return Size - Idx; });
+            }
             Res.DebugNames_[GEP] = getDebugName(GEP);
         }
     } else {
@@ -449,6 +485,9 @@ NullAbstractInterpretation NullAbstractInterpretation::meet(
     for (const auto& [Val, Name] : B.DebugNames_) {
         Result.DebugNames_[Val] = Name;
     }
+    for (const auto& [Val, Reason] : B.FailedRanges_) {
+        Result.FailedRanges_[Val] = Reason;
+    }
     return Result;
 }
 
@@ -516,7 +555,8 @@ NullAbstractInterpretation::NullAbstractInterpretation(
       LVA_(Other.LVA_),
       DL_(Other.DL_),
       IntervalFacts_(Other.IntervalFacts_),
-      Solver_(Other.Solver_)
+      Solver_(Other.Solver_),
+      FailedRanges_(Other.FailedRanges_)
 {
     std::unordered_map<const PtrAbstractValue*,
                        std::shared_ptr<PtrAbstractValue>>
@@ -532,6 +572,7 @@ NullAbstractInterpretation& NullAbstractInterpretation::operator=(
     auto Temp = Other;
     std::swap(State_, Temp.State_);
     std::swap(DebugNames_, Temp.DebugNames_);
+    std::swap(FailedRanges_, Temp.FailedRanges_);
     return *this;
 }
 
@@ -559,7 +600,45 @@ NullAbstractInterpretation::NullAbstractInterpretation(
                        PtrType->getArrayNumElements();
             }
             State_.emplace(&Arg, PtrAbstractValue::make(NullInfo, Size));
+            if (Size == 0) {
+                State_[&Arg]->Size = LatticeElem<LinExpr>::makeTop();
+            }
             DebugNames_.emplace(&Arg, getDebugName(&Arg));
         }
     }
+}
+
+std::optional<QueryResult> NullAbstractInterpretation::getFailedRange(
+    const Value* GEP) const
+{
+    const auto DebugName = getDebugName(GEP);
+    if (const auto It = FailedRanges_.find(GEP); It != FailedRanges_.end()) {
+        return It->second;
+    }
+    return {};
+}
+
+QueryResult NullAbstractInterpretation::checkMemOverflow(
+    const llvm::Instruction* I) const
+{
+    const auto [Ptr, Size] = [I, this]() {
+        if (const auto Load = dyn_cast<LoadInst>(I); Load != nullptr) {
+            return std::make_tuple(Load->getPointerOperand(),
+                                   getSizeInBytes(Load->getType(), DL_.get()));
+        } else if (const auto Store = dyn_cast<StoreInst>(I);
+                   Store != nullptr) {
+            return std::make_tuple(
+                Store->getPointerOperand(),
+                getSizeInBytes(Store->getValueOperand()->getType(), DL_.get()));
+        } else {
+            llvm_unreachable("Unsupported instruction");
+        }
+    }();
+    const auto DebugName = getDebugName(Ptr);
+    const auto PtrSize = State_.at(Ptr)->Size;
+    if (PtrSize.hasValue()) {
+        // byte addressable
+        return inRange(LinExpr(AbstractInt(Size - 1)), I, PtrSize.value());
+    }
+    return {PtrSize.isTop(), {}};
 }
