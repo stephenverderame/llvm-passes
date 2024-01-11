@@ -55,22 +55,20 @@ std::optional<int64_t> getPointeeBytes(llvm::Type* T, const DataLayout* DL)
  */
 auto indexExpr(const llvm::GetElementPtrInst* GEP, const llvm::DataLayout* DL)
 {
-    std::vector<const llvm::Value*> Indices;
+    // TODO: structures and 2d arrays
+    auto Res = LinExpr(AbstractInt(int64_t(0)));
+    const auto Size = [&]() {
+        if (GEP->getSourceElementType()->isArrayTy()) {
+            return getSizeInBytes(
+                GEP->getSourceElementType()->getArrayElementType(), DL);
+        } else {
+            return getSizeInBytes(GEP->getSourceElementType(), DL);
+        }
+    }();
     for (const auto& Idx : GEP->indices()) {
-        Indices.push_back(Idx);
+        Res.addOffset(Size, AbstractInt(Idx));
     }
-    if (Indices.size() == 1) {
-        return LinExpr(AbstractInt(Indices[0]));
-    } else if (Indices.size() == 2) {
-        assert(GEP->getSourceElementType()->isArrayTy());
-        return LinExpr(
-            AbstractInt(int64_t(0)), AbstractInt(Indices[0]),
-            getSizeInBytes(GEP->getSourceElementType()->getArrayElementType(),
-                           DL),
-            AbstractInt(Indices[1]));
-    } else {
-        llvm_unreachable("More than one index");
-    }
+    return Res;
 }
 
 }  // namespace
@@ -214,6 +212,7 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
 {
     const auto ReturnType = Call->getType();
     auto Res = *this;
+    const auto Name = Call->getCalledFunction()->getName().str();
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
@@ -224,6 +223,18 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
                             : DerefBytes);
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
+        if (Name == "malloc") {
+            assert(Call->arg_size() == 1);
+            Val->Size = LatticeElem<LinExpr>(
+                LinExpr(AbstractInt(Call->getArgOperand(0))));
+        }
+    }
+    if (Name == "free") {
+        assert(Call->arg_size() == 1);
+        const auto Arg = Call->getArgOperand(0);
+        if (Res.State_.contains(Arg)) {
+            Res.State_.at(Arg)->nullify();
+        }
     }
     // TODO: intrinsics and passing pointers as arguments
     return Res;

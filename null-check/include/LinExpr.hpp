@@ -45,6 +45,10 @@ struct Term {
     bool operator==(const Term& Other) const = default;
 };
 
+/**
+ * @brief Gets a debug name for an abstract integer, either the name of the
+ * value or the integer itself (as a constant).
+ */
 std::string getDebugName(const AbstractInt& Val);
 
 /**
@@ -65,6 +69,15 @@ struct LinExpr {
     {
         DebugName = getDebugName(Base) + " + " + getDebugName(A) + " + " +
                     std::to_string(FactorB) + " * " + getDebugName(B);
+    }
+
+    /**
+     * @brief Adds another term to the linear expression
+     */
+    void addOffset(int64_t Factor, AbstractInt Val)
+    {
+        Offsets.push_back(Term(Factor, Val));
+        DebugName += " + " + std::to_string(Factor) + " * " + getDebugName(Val);
     }
 
     bool operator==(const LinExpr& Other) const = default;

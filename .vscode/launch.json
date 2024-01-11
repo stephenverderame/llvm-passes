@@ -94,7 +94,7 @@
                 // "-ive-debug",
                 "-passes=null-check",
                 // FILE TO DEBUG
-                "./test/null-check/arrcontains.ll",
+                "./test/null-check/vec.ll",
                 "-o",
                 "/dev/null",
             ],

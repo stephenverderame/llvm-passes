@@ -1,0 +1,2 @@
+[31mSafety Violation[00m: Use of potentially null pointer in store at MakeVecBad.cc:17
+[31mSafety Violation[00m: Use of potentially null pointer in load at MakeVecBad.cc:20
