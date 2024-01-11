@@ -1,9 +1,11 @@
+#pragma once
 #include <llvm-17/llvm/IR/Instructions.h>
 
 #include <unordered_map>
 #include <vector>
 
 #include "IntervalAnalysis.hpp"
+#include "LinExpr.hpp"
 #include "df/DataFlow.hpp"
 
 namespace std
@@ -88,6 +90,6 @@ class InequalitySolver
      * @param RHS The right hand side of the inequality
      * @return true if `LHS < RHS` is always true at `I`
      */
-    bool isAlwaysInRange(const llvm::Instruction* I, const llvm::Value* LHS,
-                         std::variant<const llvm::Value*, bigint> RHS) const;
+    bool isAlwaysInRange(const llvm::Instruction* I, const LinExpr& LHS,
+                         const LinExpr& RHS) const;
 };

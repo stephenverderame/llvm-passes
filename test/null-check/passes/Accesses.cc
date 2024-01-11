@@ -1,7 +1,7 @@
+// NOLINTBEGIN
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
-// NOLINTBEGIN
 
 void access(int (&foo)[100])
 {

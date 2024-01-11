@@ -289,19 +289,120 @@ void collectDefinitions(const llvm::Instruction* I,
 }
 
 /**
- * @brief Gets the display name of the RHS value of `isAlwaysInRange`
- * @param RHS
- * @return std::string
+ * @brief Adds definitons and constraints for values which `V` depends on.
+ * If `V` is an instruction, then the definitions of `V` and its dependencies
+ * are added to `Vars` and `Constraints` via `collectDefinitions`. If `V` is
+ * not an instruction, then the range of `V` is added to `Constraints` via
+ * `addRangeConstraints`.
+ *
+ * @param SrcI The instruction which `V` is used in. Where to get interval
+ * information from.
+ * @param V The value to add the constraints for
+ * @param Intervals The result of the interval analysis
+ * @param Vars The map of variables to z3 variables
+ * @param Constraints The vector of constraints to add to
+ * @param Ctx The z3 context
+ * @param DebugConstraints The vector of constraint names
  */
-std::string RHSName(const std::variant<const llvm::Value*, bigint>& RHS)
+void addConstraintsForVal(
+    const llvm::Instruction* SrcI, const llvm::Value* V,
+    const DataFlowFacts<IntervalAnalysis>& Intervals,
+    std::unordered_map<const llvm::Value*, z3::expr>& Vars,
+    std::vector<z3::expr>& Constraints, z3::context& Ctx,
+    std::vector<std::string>& DebugConstraints)
 {
-    if (const auto RHSVal = std::get_if<const llvm::Value*>(&RHS);
-        RHSVal != nullptr) {
-        return getDebugName(*RHSVal);
+    if (const auto* I = dyn_cast<llvm::Instruction>(V); I != nullptr) {
+        collectDefinitions(I, Intervals, Vars, Constraints, Ctx,
+                           DebugConstraints);
     } else {
-        return std::get<bigint>(RHS).to_str();
+        const auto Range = Intervals.InstructionInFacts.at(SrcI).getValRange(V);
+        addRangeConstraints(Range, V, Vars, Constraints, Ctx, DebugConstraints);
     }
 }
+
+/**
+ * @brief Collects all definitons and constraints for each term in the linear
+ * expression `E`.
+ *
+ * @param I The instruction which `E` is used in. Where to get interval
+ * information from.
+ * @param E The linear expression to collect the definitions for
+ * @param Intervals The result of the interval analysis
+ * @param Vars The map of variables to z3 variables
+ * @param Constraints The vector of constraints to add to
+ * @param Ctx The z3 context
+ * @param DebugConstraints The vector of constraint names
+ */
+void collectLinExprDefinitions(
+    const llvm::Instruction* I, const LinExpr& E,
+    const DataFlowFacts<IntervalAnalysis>& Intervals,
+    std::unordered_map<const llvm::Value*, z3::expr>& Vars,
+    std::vector<z3::expr>& Constraints, z3::context& Ctx,
+    std::vector<std::string>& DebugConstraints)
+{
+    if (E.Base.isVal()) {
+        addConstraintsForVal(I, E.Base.getVal(), Intervals, Vars, Constraints,
+                             Ctx, DebugConstraints);
+    }
+    for (auto& O : E.Offsets) {
+        if (O.Val.isVal()) {
+            addConstraintsForVal(I, O.Val.getVal(), Intervals, Vars,
+                                 Constraints, Ctx, DebugConstraints);
+        }
+    }
+}
+
+/**
+ * @brief Converts an abstract integer into a z3 variable.
+ * If the abstract integer is a constant, then the constant is converted to a
+ * z3 constant. Otherwise, the value is converted to a z3 variable.
+ *
+ * @param V
+ * @param Vars
+ * @param Ctx
+ * @return z3::expr
+ */
+z3::expr abstractIntToZ3Var(
+    const AbstractInt& V,
+    std::unordered_map<const llvm::Value*, z3::expr>& Vars, z3::context& Ctx)
+{
+    if (V.isInt()) {
+        return Ctx.int_val(V.getInt());
+    } else {
+        const auto Val = V.getVal();
+        if (const auto Const = dyn_cast<llvm::ConstantInt>(Val);
+            Const != nullptr) {
+            return Ctx.int_val(Const->getSExtValue());
+        } else {
+            return getZ3Var(Val, Vars, Ctx);
+        }
+    }
+    llvm_unreachable("Invalid abstract integer");
+}
+
+/**
+ * @brief Converts a linear expression into a z3 expression.
+ *
+ * @param E The linear expression to convert
+ * @param Vars The map of variables to z3 variables
+ * @param Ctx The z3 context
+ * @return of the z3 expression and the debug name
+ */
+std::tuple<z3::expr, std::string> linExprToZ3Var(
+    const LinExpr& E, std::unordered_map<const llvm::Value*, z3::expr>& Vars,
+    z3::context& Ctx)
+{
+    z3::expr Result = abstractIntToZ3Var(E.Base, Vars, Ctx);
+    std::string DebugResult = getDebugName(E.Base);
+    for (const auto& O : E.Offsets) {
+        const auto Offset = abstractIntToZ3Var(O.Val, Vars, Ctx);
+        Result = Result + Offset * Ctx.int_val(O.Factor);
+        DebugResult +=
+            " + " + std::to_string(O.Factor) + " * " + getDebugName(O.Val);
+    }
+    return std::make_tuple(Result, DebugResult);
+}
+
 }  // namespace
 
 RelationPropagation RelationPropagation::meet(const RelationPropagation& A,
@@ -356,49 +457,28 @@ TransferRetType<RelationPropagation> RelationPropagation::transfer(
     return Res;
 }
 
-bool InequalitySolver::isAlwaysInRange(
-    const llvm::Instruction* I, const llvm::Value* LHS,
-    std::variant<const llvm::Value*, bigint> RHS) const
+bool InequalitySolver::isAlwaysInRange(const llvm::Instruction* I,
+                                       const LinExpr& LHS,
+                                       const LinExpr& RHS) const
 {
     z3::context Ctx;
     const auto& Relations = RelationFacts_.get().InstructionInFacts.at(I);
     std::unordered_map<const llvm::Value*, z3::expr> Vars;
     std::vector<z3::expr> Constraints;
     std::vector<std::string> DebugConstraints;
-    if (const auto* LHSI = dyn_cast<llvm::Instruction>(LHS); LHSI != nullptr) {
-        collectDefinitions(LHSI, IntervalFacts_, Vars, Constraints, Ctx,
-                           DebugConstraints);
-    }
-    const auto RHSZ3 = [&]() {
-        if (const auto RHSVal = std::get_if<const llvm::Value*>(&RHS);
-            RHSVal != nullptr) {
-            if (const auto* RHSI = dyn_cast<llvm::Instruction>(*RHSVal);
-                RHSI != nullptr) {
-                collectDefinitions(RHSI, IntervalFacts_, Vars, Constraints, Ctx,
-                                   DebugConstraints);
-            }
-            return getZ3Var(*RHSVal, Vars, Ctx);
-        } else {
-            return Ctx.int_val(std::get<bigint>(RHS).to_str().c_str());
-        }
-    }();
-    const auto LHSZ3 = getZ3Var(LHS, Vars, Ctx);
-    if (const auto RHSVal = std::get_if<const llvm::Value*>(&RHS);
-        RHSVal != nullptr) {
-    }
+    collectLinExprDefinitions(I, LHS, IntervalFacts_, Vars, Constraints, Ctx,
+                              DebugConstraints);
+    collectLinExprDefinitions(I, RHS, IntervalFacts_, Vars, Constraints, Ctx,
+                              DebugConstraints);
+    const auto [LHSZ3, LHSName] = linExprToZ3Var(LHS, Vars, Ctx);
+    const auto [RHSZ3, RHSName] = linExprToZ3Var(RHS, Vars, Ctx);
     for (auto [Args, Pred] : Relations.getRelations()) {
         const auto [LHSArg, RHSArg] = Args;
         if (Vars.contains(LHSArg) || Vars.contains(RHSArg)) {
-            if (const auto LHSArgI = dyn_cast<llvm::Instruction>(LHSArg);
-                LHSArgI != nullptr) {
-                collectDefinitions(LHSArgI, IntervalFacts_, Vars, Constraints,
-                                   Ctx, DebugConstraints);
-            }
-            if (const auto RHSArgI = dyn_cast<llvm::Instruction>(RHSArg);
-                RHSArgI != nullptr) {
-                collectDefinitions(RHSArgI, IntervalFacts_, Vars, Constraints,
-                                   Ctx, DebugConstraints);
-            }
+            addConstraintsForVal(I, LHSArg, IntervalFacts_, Vars, Constraints,
+                                 Ctx, DebugConstraints);
+            addConstraintsForVal(I, RHSArg, IntervalFacts_, Vars, Constraints,
+                                 Ctx, DebugConstraints);
             Constraints.emplace_back(
                 genConstraint(Pred, getZ3Var(LHSArg, Vars, Ctx),
                               getZ3Var(RHSArg, Vars, Ctx)));
@@ -408,8 +488,6 @@ bool InequalitySolver::isAlwaysInRange(
                 getDebugName(RHSArg));
         }
     }
-    const auto DebugTest = getDebugName(LHS) + " >= " + RHSName(RHS) + " || " +
-                           getDebugName(LHS) + " < 0";
     z3::solver Solver(Ctx);
     for (const auto& Constraint : Constraints) {
         Solver.add(Constraint);

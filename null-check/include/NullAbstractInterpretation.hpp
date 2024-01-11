@@ -11,6 +11,7 @@
 
 #include "IntervalAnalysis.hpp"
 #include "KnowledgeGraph.hpp"
+#include "LinExpr.hpp"
 #include "df/DataFlow.hpp"
 
 /**
@@ -33,20 +34,19 @@ using NullAbstractVals =
  * This is the representation of a pointer in the abstract domain.
  * TOP: Unknown
  * BOTTOM: Null
- *
  */
 struct PtrAbstractValue {
     /// If the value is known to be null.
     NullState IsNull = NullState::MaybeNull;
-    /// The size of the data referred to by the pointer.
-    LatticeElem<uint64_t> Size;
+    /// The size of the data referred to by the pointer, in bytes
+    LatticeElem<LinExpr> Size;
     /// The value of the data referred ;to be the pointer, may be null.
     std::shared_ptr<PtrAbstractValue> Data = nullptr;
 
     /// @brief Constructs a TOP abstract value
     PtrAbstractValue() = default;
     explicit PtrAbstractValue(NullState K) : IsNull(K), Data() {}
-    explicit PtrAbstractValue(NullState K, LatticeElem<uint64_t> Size)
+    explicit PtrAbstractValue(NullState K, LatticeElem<LinExpr> Size)
         : IsNull(K), Size(Size), Data()
     {
     }
@@ -56,10 +56,23 @@ struct PtrAbstractValue {
      * the given NullState, known size of data, and no data (not a pointer to a
      * pointer).
      */
-    static auto make(NullState N, uint64_t Size)
+    static auto make(NullState N, std::optional<int64_t> Size)
     {
-        return std::make_shared<PtrAbstractValue>(N,
-                                                  LatticeElem<uint64_t>(Size));
+        return std::make_shared<PtrAbstractValue>(
+            N, Size.has_value()
+                   ? LatticeElem<LinExpr>(LinExpr(AbstractInt(Size.value())))
+                   : LatticeElem<LinExpr>::makeBottom());
+    }
+
+    /**
+     * @brief Constructs a new abstract location and abstract value which has
+     * the given NullState, known size of data, and no data (not a pointer to a
+     * pointer).
+     */
+    static auto make(NullState N, LinExpr&& Size)
+    {
+        return std::make_shared<PtrAbstractValue>(
+            N, LatticeElem<LinExpr>(std::move(Size)));
     }
 
     /**
@@ -70,7 +83,7 @@ struct PtrAbstractValue {
     static auto make(NullState N)
     {
         return std::make_shared<PtrAbstractValue>(
-            N, LatticeElem<uint64_t>::makeBottom());
+            N, LatticeElem<LinExpr>::makeBottom());
     }
 
     /**
@@ -174,8 +187,8 @@ class NullAbstractInterpretation
     PtrAbstractValue meetVal(const PtrAbstractValue& A,
                              const PtrAbstractValue& B,
                              const NullAbstractInterpretation& ContextB);
-    bool inRange(const llvm::Use& Val, const llvm::Instruction* Inst,
-                 uint64_t Size) const;
+    bool inRange(const LinExpr& Idx, const llvm::GetElementPtrInst* Inst,
+                 const LinExpr& Size) const;
 
   public:
     /// @see Fact::meet

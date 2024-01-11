@@ -8,6 +8,7 @@ add_llvm_pass_plugin(NullCheck
     src/IntRange.cpp
     src/Bound.cpp
     src/KnowledgeGraph.cpp
+    src/LinExpr.cpp
 )
 
 target_link_directories(NullCheck PUBLIC /usr/lib)

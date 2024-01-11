@@ -36,6 +36,43 @@ const auto getSizeInBytes(Type* Ty, const DataLayout* DL)
     return DL->getTypeStoreSize(Ty);
 }
 
+std::optional<int64_t> getPointeeBytes(llvm::Type* T, const DataLayout* DL)
+{
+    if (T->isArrayTy()) {
+        return DL->getTypeStoreSize(T->getArrayElementType()) *
+               T->getArrayNumElements();
+    } else {
+        return {};
+    }
+}
+
+/**
+ * @brief Constructs a linear exression in bytes indexing into a pointer
+ *
+ * @param GEP
+ * @param DL
+ * @return auto
+ */
+auto indexExpr(const llvm::GetElementPtrInst* GEP, const llvm::DataLayout* DL)
+{
+    std::vector<const llvm::Value*> Indices;
+    for (const auto& Idx : GEP->indices()) {
+        Indices.push_back(Idx);
+    }
+    if (Indices.size() == 1) {
+        return LinExpr(AbstractInt(Indices[0]));
+    } else if (Indices.size() == 2) {
+        assert(GEP->getSourceElementType()->isArrayTy());
+        return LinExpr(
+            AbstractInt(int64_t(0)), AbstractInt(Indices[0]),
+            getSizeInBytes(GEP->getSourceElementType()->getArrayElementType(),
+                           DL),
+            AbstractInt(Indices[1]));
+    } else {
+        llvm_unreachable("More than one index");
+    }
+}
+
 }  // namespace
 
 bool PtrAbstractValue::operator==(const PtrAbstractValue& Other) const
@@ -73,8 +110,14 @@ PtrAbstractValue NullAbstractInterpretation::meetVal(
 {
     auto Result = A;
     Result.IsNull = A.IsNull == B.IsNull ? A.IsNull : NullState::MaybeNull;
-    Result.Size = LatticeElem<uint64_t>::meet(
-        A.Size, B.Size, [](auto A, auto B) { return std::min(A, B); });
+    Result.Size =
+        LatticeElem<LinExpr>::meet(A.Size, B.Size, [](auto A, auto B) {
+            if (A != B) {
+                llvm_unreachable("SSA violation");
+            } else {
+                return A;
+            }
+        });
     if (Result.IsNull == NullState::NonNull) {
         if (A.Data && B.Data) {
             const auto& AData = *A.Data;
@@ -113,9 +156,12 @@ using TransferRet = NullAbstractInterpretation::TransferRet;
 TransferRet NullAbstractInterpretation::transferAlloca(
     const AllocaInst* Alloca) const
 {
-    const auto Size = Alloca->getAllocatedType()->isArrayTy()
-                          ? Alloca->getAllocatedType()->getArrayNumElements()
-                          : 1;
+    const auto Size =
+        Alloca->getAllocatedType()->isArrayTy()
+            ? Alloca->getAllocatedType()->getArrayNumElements() *
+                  DL_->getTypeStoreSize(
+                      Alloca->getAllocatedType()->getArrayElementType())
+            : DL_->getTypeStoreSize(Alloca->getAllocatedType());
     return NullAbstractInterpretation::insertIntoRes(
         *this, Alloca, PtrAbstractValue::make(NullState::NonNull, Size));
 }
@@ -171,8 +217,11 @@ TransferRet NullAbstractInterpretation::transferCall(const CallInst* Call) const
     if (ReturnType->isPointerTy()) {
         const auto Attrib = Call->getAttributes();
         const auto NonNull = Attrib.hasAttrSomewhere(Attribute::NonNull);
-        const auto Val = PtrAbstractValue::make(NonNull ? NullState::NonNull
-                                                        : NullState::MaybeNull);
+        const auto DerefBytes = Attrib.getRetDereferenceableBytes();
+        const auto Val = PtrAbstractValue::make(
+            NonNull ? NullState::NonNull : NullState::MaybeNull,
+            DerefBytes == 0 ? getPointeeBytes(ReturnType, DL_.get())
+                            : DerefBytes);
         Res.State_[Call] = Val;
         Res.DebugNames_[Call] = getDebugName(Call);
     }
@@ -209,28 +258,22 @@ TransferRet NullAbstractInterpretation::transferLoad(const LoadInst* Load) const
  * @return true if all possible values of the given value is in range of `0` to
  * `Size`
  */
-bool NullAbstractInterpretation::inRange(const Use& Val,
-                                         const llvm::Instruction* Inst,
-                                         uint64_t Size) const
+bool NullAbstractInterpretation::inRange(const LinExpr& Idx,
+                                         const llvm::GetElementPtrInst* Inst,
+                                         const LinExpr& Size) const
 {
-    const auto Range = LVA_.get().getConstantRangeAtUse(Val);
-    const auto L = Range.getLower();
-    const auto U = Range.getUpper();
-    if (Range.getLower().isNegative() || !Range.getUnsignedMax().ult(Size)) {
-        const auto Interval =
-            IntervalFacts_.get().InstructionInFacts.at(Inst).getValRange(Val);
-        if (Interval.has_value()) {
-            const auto IntVal = Interval.value();
-            if (!(IntVal.Lower.isNegative() ||
-                  IntVal.Upper >= bound::Bound(bigint(std::to_string(Size))))) {
-                return true;
-            }
+    const auto IdxRange =
+        exprToRange(Idx, IntervalFacts_.get().InstructionInFacts.at(Inst));
+    const auto SizeRange =
+        exprToRange(Size, IntervalFacts_.get().InstructionInFacts.at(Inst));
+    if (IdxRange.has_value() && SizeRange.has_value()) {
+        if (IdxRange.value().isNonNegative() &&
+            IdxRange.value().Upper < SizeRange.value().Lower) {
+            return true;
         }
-        const auto DebugName = getDebugName(Val);
-        return Solver_.get().isAlwaysInRange(Inst, Val, bigint(Size));
-    } else {
-        return true;
     }
+    const auto DebugName = getDebugName(Inst);
+    return Solver_.get().isAlwaysInRange(Inst, Idx, Size);
 }
 
 TransferRet NullAbstractInterpretation::transferGetElemPtr(
@@ -239,26 +282,15 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
     auto Res = *this;
     Res.DebugNames_[GEP] = getDebugName(GEP);
     const auto BasePtr = GEP->getPointerOperand();
-    bool Bottom = false;
+    bool Bottom = true;
+    const auto Idx = indexExpr(GEP, DL_.get());
     if (auto It = Res.State_.find(BasePtr); It != Res.State_.end()) {
         const auto& BaseAbstractVal = *It->second;
-        if (BaseAbstractVal.Size.hasValue() ||
-            GEP->getSourceElementType()->isArrayTy()) {
-            for (const auto& Idx : GEP->indices()) {
-                auto Size =
-                    BaseAbstractVal.Size.hasValue()
-                        ? BaseAbstractVal.Size.value()
-                        : GEP->getSourceElementType()->getArrayNumElements();
-                if (!inRange(Idx, GEP, Size)) {
-                    Bottom = true;
-                    break;
-                }
+        if (BaseAbstractVal.Size.hasValue()) {
+            if (inRange(Idx, GEP, BaseAbstractVal.Size.value())) {
+                Bottom = false;
             }
-        } else {
-            Bottom = true;
         }
-    } else {
-        Bottom = true;
     }
     if (Bottom) {
         if (Res.State_.contains(GEP)) {
@@ -269,10 +301,13 @@ TransferRet NullAbstractInterpretation::transferGetElemPtr(
             Res.DebugNames_[GEP] = getDebugName(GEP);
         }
     } else {
-        const auto DataPtr = Res.State_.at(BasePtr)->Data;
-        Res.State_[GEP] =
-            DataPtr ? DataPtr : PtrAbstractValue::make(NullState::NonNull);
-        Res.State_[GEP]->IsNull = NullState::NonNull;
+        auto NewPtr =
+            std::make_shared<PtrAbstractValue>(*Res.State_.at(BasePtr));
+        Res.State_[GEP] = NewPtr;
+        NewPtr->IsNull = NullState::NonNull;
+        if (NewPtr->Size.hasValue()) {
+            NewPtr->Size.value() = NewPtr->Size.value() - Idx;
+        }
         Res.DebugNames_[GEP] = getDebugName(GEP);
     }
     return Res;
@@ -377,7 +412,9 @@ TransferRet NullAbstractInterpretation::transfer(
         return transferGetElemPtr(GEP);
     } else if (Inst.getType()->isPointerTy()) {
         return insertIntoRes(*this, &Inst,
-                             PtrAbstractValue::make(NullState::MaybeNull));
+                             PtrAbstractValue::make(
+                                 NullState::MaybeNull,
+                                 DL_.get()->getTypeStoreSize(Inst.getType())));
     }
     return {*this};
 }
@@ -505,7 +542,12 @@ NullAbstractInterpretation::NullAbstractInterpretation(
             const auto NullInfo = Arg.hasAttribute(Attribute::NonNull)
                                       ? NullState::NonNull
                                       : NullState::MaybeNull;
-            State_.emplace(&Arg, PtrAbstractValue::make(NullInfo));
+            auto Size = Arg.getDereferenceableBytes();
+            if (Size == 0 && PtrType->isArrayTy()) {
+                Size = DL_->getTypeStoreSize(PtrType->getArrayElementType()) *
+                       PtrType->getArrayNumElements();
+            }
+            State_.emplace(&Arg, PtrAbstractValue::make(NullInfo, Size));
             DebugNames_.emplace(&Arg, getDebugName(&Arg));
         }
     }
